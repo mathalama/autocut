@@ -16,11 +16,13 @@ VAD_PARAMETERS = {
 
 PAUSE_THRESHOLD_SECONDS = 0.7
 PAUSE_RETAIN_SECONDS = 0.25
+IDLE_CUT_THRESHOLD_SECONDS = 3.5  # Dead-zone threshold: gaps <= 3.5s within action sessions are NEVER cut
 CONTEXTUAL_FILLER_PAUSE_SECONDS = 0.15
 INPUT_ACTION_PADDING_SECONDS = 2.0  # Window p around user actions (g <= 2p merges actions)
 SCREEN_DIFF_THRESHOLD = 25
 SCREEN_MIN_CHANGED_FRACTION = 0.001  # 0.1% of frame area (replaces fixed pixel counts across resolutions)
-DEFAULT_HOTKEY = "pause"
+DEFAULT_HOTKEY = "f12"
+DEFAULT_SYNC_KEY = "scroll_lock"
 EDL_WORD_PADDING_SECONDS = 0.06
 EDL_MERGE_GAP_SECONDS = 0.1
 EDL_MIN_KEEP_SECONDS = 0.3

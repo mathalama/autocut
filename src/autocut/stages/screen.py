@@ -50,9 +50,6 @@ def detect_screen_activity(
     prev_frame: np.ndarray | None = None
     frame_idx = 0
 
-    # Spinner suppression: track consecutive active frames per tile
-    tile_active_counts = np.zeros((9, 16), dtype=np.int32)
-
     while True:
         raw = proc.stdout.read(frame_size)
         if len(raw) < frame_size:
@@ -63,25 +60,12 @@ def detect_screen_activity(
             diff_mask = diff > diff_threshold
             changed_pixels = int(np.sum(diff_mask))
 
-            # Spatial tile distribution check: 16x9 grid (40x40 tiles)
-            tile_h, tile_w = height // 9, width // 16
-            reshaped = diff_mask[:tile_h * 9, :tile_w * 16].reshape((9, tile_h, 16, tile_w))
-            active_tiles_mask = np.any(reshaped, axis=(1, 3))
-
-            # Update spinner tracking: increment count for active tiles, reset inactive
-            tile_active_counts = np.where(active_tiles_mask, tile_active_counts + 1, 0)
-            # Tiles active for > 25 consecutive frames (5s) without macro changes are background spinners
-            spinner_tiles = tile_active_counts > int(fps * 5)
-            non_spinner_active_tiles = active_tiles_mask & (~spinner_tiles)
-            tiles_with_change = int(np.sum(non_spinner_active_tiles))
-
-            is_macro_change = changed_pixels >= macro_threshold_pixels
-            is_distributed_change = changed_pixels >= effective_min_pixels and tiles_with_change >= 2
-
-            if is_macro_change or is_distributed_change:
+            # Terminal builds, docker pull, npm install and progress bars change
+            # characters or bars across frames. Bounded cursor blink (<10px) is rejected.
+            if changed_pixels >= effective_min_pixels:
                 t_start = round((frame_idx - 1) * frame_duration, 3)
                 t_end = round(frame_idx * frame_duration, 3)
-                act_type = "typing" if changed_pixels < 2000 else "motion"
+                act_type = "motion" if changed_pixels >= macro_threshold_pixels else "typing"
                 active_spans.append((t_start, t_end, changed_pixels, act_type))
 
         prev_frame = curr_frame

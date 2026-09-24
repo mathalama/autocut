@@ -162,7 +162,8 @@ class ObsSyncHandler:
 
 def listen(
     output_path: Path,
-    bad_take_key: str = "pause",
+    bad_take_key: str = "f12",
+    sync_key: str = "scroll_lock",
     obs_port: int = 4455,
     obs_password: str = "",
 ) -> None:
@@ -174,7 +175,8 @@ def listen(
         except Exception:
             events = []
 
-    vk_bad_take = VK_MAP.get(bad_take_key.lower(), 0x13)
+    vk_bad_take = VK_MAP.get(bad_take_key.lower(), 0x7B)  # default F12
+    vk_sync = VK_MAP.get(sync_key.lower(), 0x91)          # default ScrollLock
     user32 = ctypes.windll.user32
     handler = ObsSyncHandler(output_path)
     has_obs = handler.try_connect(port=obs_port, password=obs_password)
@@ -188,7 +190,7 @@ def listen(
         if obs_elapsed is not None:
             return obs_elapsed, "OBS"
         elif manual_start_time is not None:
-            return max(0.0, time.monotonic() - manual_start_time), "Manual-F8"
+            return max(0.0, time.monotonic() - manual_start_time), f"Manual-{sync_key.upper()}"
         return max(0.0, time.monotonic() - script_launch_time), "Unsynced"
 
     def record_input_event(event_type: str, extra: dict | None = None) -> None:
@@ -206,15 +208,15 @@ def listen(
 
     def on_key_press(key):
         nonlocal last_key_time
-        # Filter out modifiers, bad_take key, and F8 sync key
+        # Filter out modifiers, bad_take key, and manual sync key
         if key in MODIFIER_KEYS:
             return
-        if hasattr(key, "name") and key.name and key.name.lower() in (bad_take_key.lower(), "f8"):
+        if hasattr(key, "name") and key.name and key.name.lower() in (bad_take_key.lower(), sync_key.lower()):
             return
-        if hasattr(key, "char") and key.char and key.char.lower() == bad_take_key.lower():
+        if hasattr(key, "char") and key.char and key.char.lower() in (bad_take_key.lower(), sync_key.lower()):
             return
-        # Suppress any key events for 0.6s after hotkey marker to prevent recording modifier tail
-        if time.monotonic() - last_marker_monotonic < 0.6:
+        # Suppress key events for only 0.15s after marker to prevent modifier tails without swallowing typing
+        if time.monotonic() - last_marker_monotonic < 0.15:
             return
 
         now = time.monotonic()
@@ -243,33 +245,34 @@ def listen(
 
     print("=" * 65)
     print(f"[*] Autocut Input Logger & Marker Listener Active")
-    print(f"[*] Bad take hotkey: [{bad_take_key.upper()}] (Safe from IDE conflicts)")
+    print(f"[*] Bad take hotkey: [{bad_take_key.upper()}] (Safe from IDE conflicts & conhost)")
+    print(f"[*] Manual sync key: [{sync_key.upper()}] (Hit when starting OBS recording)")
     print(f"[*] Target output file: {output_path.resolve()}")
     if has_obs:
         print("[+] CONNECTED TO OBS WEBSOCKET!")
         print("    -> Time zero & pause/resume synchronize automatically with OBS.")
     else:
         print("[-] OBS WebSocket not connected on localhost:4455.")
-        print("    -> Press [F8] when you click 'Start Recording' in OBS.")
+        print(f"    -> Press [{sync_key.upper()}] when you click 'Start Recording' in OBS.")
     print(f"    -> Press [{bad_take_key.upper()}] whenever you make a mistake / bad take.")
     print("[*] Privacy: Timestamps and process names only (NO window titles or key text).")
     print("[*] Press [Ctrl+C] to exit listener.")
     print("=" * 65)
 
-    was_f8_pressed = False
+    was_sync_pressed = False
     was_marker_pressed = False
     last_save_time = time.monotonic()
     last_proc_name = ""
 
     try:
         while True:
-            # Check F8 (Manual start sync)
-            f8_pressed = bool(user32.GetAsyncKeyState(VK_MAP["f8"]) & 0x8000)
-            if f8_pressed and not was_f8_pressed:
+            # Check manual sync key
+            sync_pressed = bool(user32.GetAsyncKeyState(vk_sync) & 0x8000)
+            if sync_pressed and not was_sync_pressed:
                 manual_start_time = time.monotonic()
-                print(f"\n[!] [F8] RECORDING START SYNCED! Time zero set to now.")
+                print(f"\n[!] [{sync_key.upper()}] RECORDING START SYNCED! Time zero set to now.")
                 _play_beep(0x00000040)
-            was_f8_pressed = f8_pressed
+            was_sync_pressed = sync_pressed
 
             # Check Bad Take key
             marker_pressed = bool(user32.GetAsyncKeyState(vk_bad_take) & 0x8000)
@@ -313,9 +316,10 @@ def listen(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OBS Hotkey & input logger for autocut")
     parser.add_argument("output", nargs="?", default="work/markers.json", help="Path to markers.json")
-    parser.add_argument("--key", default="pause", help="Hotkey for bad take marker (pause, f9, f10, f12)")
+    parser.add_argument("--key", default="f12", help="Hotkey for bad take marker (f12, scroll_lock, pause, etc.)")
+    parser.add_argument("--sync-key", default="scroll_lock", help="Hotkey for manual start sync (scroll_lock, f11, etc.)")
     parser.add_argument("--port", type=int, default=4455, help="OBS WebSocket port")
     parser.add_argument("--password", default="", help="OBS WebSocket password")
     args = parser.parse_args()
 
-    listen(Path(args.output), bad_take_key=args.key, obs_port=args.port, obs_password=args.password)
+    listen(Path(args.output), bad_take_key=args.key, sync_key=args.sync_key, obs_port=args.port, obs_password=args.password)

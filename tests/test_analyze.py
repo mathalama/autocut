@@ -188,5 +188,27 @@ def test_analyze_session_merges_when_gap_leq_2p() -> None:
     assert "Coding session protected" in decisions[0].details
 
 
+def test_analyze_short_idle_gap_under_idle_threshold_is_never_cut() -> None:
+    # 10s pause between words. User types at 2.0 (window [0.0, 4.0]) and at 7.5 (window [5.5, 9.5]).
+    # Dead zone between 4.0 and 5.5 is 1.5s.
+    # Since 1.5s <= IDLE_CUT_THRESHOLD_SECONDS (3.5s), it MUST NOT be cut into micro-splices!
+    words = [("слово1", 0.0, 1.0), ("слово2", 10.0, 11.0)]
+    input_events = [
+        {"time": 2.0, "type": "key"},
+        {"time": 7.5, "type": "key"},
+    ]
+    cuts, decisions = analyze(
+        transcript(words),
+        SpeechIntervals(source="audio.wav", intervals=[]),
+        markers=input_events,
+        return_decisions=True,
+    )
+    silence_cuts = [c for c in cuts if c.reason == "silence"]
+    assert len(silence_cuts) == 0
+    assert len(decisions) == 1
+    assert decisions[0].decision == "keep: input"
+
+
+
 
 

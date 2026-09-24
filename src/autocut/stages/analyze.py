@@ -5,6 +5,7 @@ import re
 from autocut.config import (
     CONTEXTUAL_FILLER_PAUSE_SECONDS,
     CUT_CONFIDENCE,
+    IDLE_CUT_THRESHOLD_SECONDS,
     INPUT_ACTION_PADDING_SECONDS,
     PAUSE_RETAIN_SECONDS,
     PAUSE_THRESHOLD_SECONDS,
@@ -89,6 +90,7 @@ def _evaluate_pauses(
     screen: ScreenActivity | None = None,
     p: float = INPUT_ACTION_PADDING_SECONDS,
     pause_threshold: float = PAUSE_THRESHOLD_SECONDS,
+    idle_cut_threshold: float = IDLE_CUT_THRESHOLD_SECONDS,
     pause_retain: float = PAUSE_RETAIN_SECONDS,
 ) -> tuple[list[Cut], list[PauseDecision]]:
     cuts: list[Cut] = []
@@ -126,11 +128,16 @@ def _evaluate_pauses(
         all_protected = _merge_intervals(input_spans + screen_spans)
         idle_spans = _subtract_intervals((gap_start, gap_end), all_protected)
 
-        # Evaluate idle spans to determine cuts
+        # Evaluate idle spans to determine cuts:
+        # If user actions or screen changes were present in this pause, use idle_cut_threshold (3.5s)
+        # to NEVER cut 1-2s pauses within sessions.
+        # If no actions were present at all, use pause_threshold (0.7s) to compress conversational dead air.
+        effective_threshold = idle_cut_threshold if (input_spans or screen_spans) else pause_threshold
+
         pause_cuts: list[Cut] = []
         for idle_s, idle_e in idle_spans:
             idle_len = idle_e - idle_s
-            if idle_len > pause_threshold:
+            if idle_len > effective_threshold:
                 cut_s = idle_s + margin
                 cut_e = idle_e - margin
                 if cut_e > cut_s:

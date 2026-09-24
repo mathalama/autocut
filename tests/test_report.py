@@ -72,3 +72,28 @@ def test_write_cut_report_includes_pause_decisions(tmp_path: Path) -> None:
     assert "`compress: idle`" in content
     assert "Coding session protected: 12 events" in content
 
+
+def test_generate_second_timeline(tmp_path: Path) -> None:
+    from autocut.models import SpeechInterval, SpeechIntervals
+    from autocut.report import generate_second_timeline
+
+    cuts = [Cut(start=3.0, end=4.0, reason="silence", confidence=0.95)]
+    speech = SpeechIntervals(source="audio.wav", intervals=[SpeechInterval(start=0.0, end=2.0)])
+    input_events = [{"time": 1.2, "type": "key"}]
+    timeline_file = tmp_path / "timeline_debug.txt"
+
+    content = generate_second_timeline(
+        duration=5.0,
+        cuts=cuts,
+        speech=speech,
+        input_events=input_events,
+        screen=None,
+        output_path=timeline_file,
+    )
+    assert timeline_file.exists()
+    assert "[00:01] VAD: SPEECH" in content
+    assert "KEY(1)" in content
+    assert "[00:03] VAD: SILENCE" in content
+    assert "CUT (silence)" in content
+
+

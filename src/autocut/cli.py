@@ -9,7 +9,7 @@ import typer
 
 from autocut.config import DEFAULT_COMPUTE_TYPE, DEFAULT_DEVICE, DEFAULT_INITIAL_PROMPT, DEFAULT_MODEL
 from autocut.models import Cut, EditDecisionList, MediaInfo, ScreenActivity, SpeechIntervals, Transcript
-from autocut.report import write_cut_report
+from autocut.report import generate_second_timeline, write_cut_report
 from autocut.stages.analyze import analyze as analyze_stage
 from autocut.stages.asr import transcribe as transcribe_audio
 from autocut.stages.edl import build_edl
@@ -134,6 +134,21 @@ def analyze(
     all_words = [word for segment in transcript.segments for word in segment.words]
     write_cut_report(cuts, all_words, work_dir / "cuts_report.md", pause_decisions=pause_decisions)
 
+    ingest_path = work_dir / "ingest.json"
+    duration = (
+        MediaInfo.model_validate_json(ingest_path.read_text(encoding="utf-8")).duration
+        if ingest_path.exists()
+        else (all_words[-1].end if all_words else 0.0)
+    )
+    generate_second_timeline(
+        duration=duration,
+        cuts=cuts,
+        speech=speech,
+        input_events=markers_data,
+        screen=screen_data,
+        output_path=work_dir / "timeline_debug.txt",
+    )
+
     silence_count = sum(1 for c in cuts if c.reason == "silence")
     filler_count = sum(1 for c in cuts if c.reason == "filler")
     repeat_count = sum(1 for c in cuts if c.reason == "repeat")
@@ -197,6 +212,14 @@ def render(
         cuts_path.write_text(json.dumps([c.model_dump() for c in cuts], indent=2), encoding="utf-8")
         all_words = [w for seg in transcript.segments for w in seg.words]
         write_cut_report(cuts, all_words, work_dir / "cuts_report.md", pause_decisions=pause_decisions)
+        generate_second_timeline(
+            duration=media.duration,
+            cuts=cuts,
+            speech=speech,
+            input_events=markers_data,
+            screen=screen_data,
+            output_path=work_dir / "timeline_debug.txt",
+        )
     else:
         cuts = [Cut.model_validate(c) for c in json.loads(cuts_path.read_text(encoding="utf-8"))]
 
@@ -328,7 +351,8 @@ def run(
 @app.command(name="listen-markers")
 def listen_markers_command(
     output: Path = typer.Option(Path("work/markers.json"), "--output", "-o", help="Path to markers.json file."),
-    key: str = typer.Option("pause", "--key", "-k", help="Hotkey for bad take marker (pause, f9, f10, f12, etc.)."),
+    key: str = typer.Option("f12", "--key", "-k", help="Hotkey for bad take marker (f12, scroll_lock, pause, etc.)."),
+    sync_key: str = typer.Option("scroll_lock", "--sync-key", "-s", help="Hotkey for manual start sync (scroll_lock, f11, etc.)."),
     port: int = typer.Option(4455, "--port", "-p", help="OBS WebSocket port."),
     password: str = typer.Option("", "--password", help="OBS WebSocket password."),
 ) -> None:
@@ -336,7 +360,7 @@ def listen_markers_command(
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     from scripts.listen_markers import listen
-    listen(output, bad_take_key=key, obs_port=port, obs_password=password)
+    listen(output, bad_take_key=key, sync_key=sync_key, obs_port=port, obs_password=password)
 
 
 def main() -> None:
