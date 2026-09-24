@@ -1,1 +1,14 @@
-# Filler words will be curated after Stage 1 transcript review.
+always	э
+always	эм
+always	ээ
+always	эээ
+always	мм
+always	ммм
+always	хм
+always	гм
+contextual	ну
+contextual	типа
+contextual	как бы
+contextual	короче
+contextual	вот
+contextual	значит

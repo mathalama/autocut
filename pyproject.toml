@@ -18,7 +18,10 @@ dependencies = [
 # PyTorch/CTranslate2 during Stage 0.
 pipeline = [
   "faster-whisper==1.2.1",
+  "numpy>=2.0.0",
+  "obsws-python>=1.8.0",
   "opentimelineio==0.18.1",
+  "pynput>=1.8.2",
   "pysubs2==1.8.0",
 ]
 comparison = ["auto-editor==29.3.1"]
