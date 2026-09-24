@@ -1,0 +1,1 @@
+"""Subtitle-generation stage scaffold."""

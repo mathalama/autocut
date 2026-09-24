@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autocut"
+version = "0.0.0"
+description = "CLI skeleton for non-destructive screencast editing."
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "pydantic==2.13.5",
+  "typer==0.27.2",
+]
+
+[project.optional-dependencies]
+# Kept optional until the corresponding implementation stage to avoid pulling
+# PyTorch/CTranslate2 during Stage 0.
+pipeline = [
+  "faster-whisper==1.2.1",
+  "opentimelineio==0.18.1",
+  "pysubs2==1.8.0",
+  "silero-vad==6.2.3",
+]
+comparison = ["auto-editor==29.3.1"]
+timing = ["stable-ts==2.19.1"]
+
+[project.scripts]
+autocut = "autocut.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autocut"]

@@ -1,0 +1,1 @@
+"""Cut-report generation scaffold."""

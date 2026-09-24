@@ -1,0 +1,1 @@
+"""Timestamp-remapping stage scaffold."""

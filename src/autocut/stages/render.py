@@ -1,0 +1,1 @@
+"""ffmpeg-rendering stage scaffold."""
