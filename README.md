@@ -5,11 +5,22 @@ CLI tool for non-destructive screencast editing. This repository currently conta
 ## Install
 
 ```powershell
-python -m pip install -e .
+py -3.10 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
-Stage-specific packages are deliberately optional during Stage 0:
+Install the approved Stage 1 ASR dependency only in that environment:
 
 ```powershell
-python -m pip install -e ".[pipeline]"
+.\.venv\Scripts\python.exe -m pip install faster-whisper==1.2.1
 ```
+
+## Stage 1
+
+After opening a new terminal so the ffmpeg PATH change is active, run:
+
+```powershell
+.\.venv\Scripts\autocut.exe run recording.mkv --language ru --initial-prompt "Codex, Python, TypeScript, ffmpeg"
+```
+
+The default output directory is `work/<recording-name>/` and contains `ingest.json`, `audio.wav`, `speech.json`, and `transcript.json`. Omit `--language` for automatic language detection; write each comparison to a different `--work-dir`.

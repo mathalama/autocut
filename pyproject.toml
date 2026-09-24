@@ -20,10 +20,10 @@ pipeline = [
   "faster-whisper==1.2.1",
   "opentimelineio==0.18.1",
   "pysubs2==1.8.0",
-  "silero-vad==6.2.3",
 ]
 comparison = ["auto-editor==29.3.1"]
 timing = ["stable-ts==2.19.1"]
+dev = ["pytest==8.3.5"]
 
 [project.scripts]
 autocut = "autocut.cli:main"
