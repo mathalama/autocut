@@ -100,9 +100,20 @@ html, body {
   transition: opacity 0.5s ease;
 }
 
-/* Text rendering without pulsing or glow */
+/* 2-line rolling subtitle typography */
+.caption-prev {
+  opacity: 0.70;
+  font-size: 0.9em;
+  margin-bottom: 4px;
+  word-wrap: break-word;
+}
+
+.caption-prev:empty {
+  display: none;
+}
+
 .caption-body {
-  display: inline;
+  display: block;
 }
 
 .caption-committed {

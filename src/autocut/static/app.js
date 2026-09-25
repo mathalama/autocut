@@ -6,7 +6,9 @@
 (function () {
   const statusPill = document.getElementById("status-pill");
   const statusText = document.getElementById("status-text");
+  const captionContainer = document.getElementById("caption-container");
   const captionCard = document.getElementById("caption-card");
+  const captionPrev = document.getElementById("caption-prev");
   const captionCommitted = document.getElementById("caption-committed");
   const captionLive = document.getElementById("caption-live");
 
@@ -34,6 +36,17 @@
   const customAlign = urlParams.get("align");
   if (customAlign) {
     captionCard.style.textAlign = customAlign;
+  }
+
+  // Position control: ?pos=top | ?pos=center | ?pos=bottom (default)
+  const posParam = urlParams.get("pos");
+  if (posParam === "top") {
+    captionContainer.style.bottom = "auto";
+    captionContainer.style.top = "40px";
+  } else if (posParam === "center") {
+    captionContainer.style.bottom = "auto";
+    captionContainer.style.top = "50%";
+    captionContainer.style.transform = "translateY(-50%)";
   }
 
   if (urlParams.get("hideStatus") === "1" || urlParams.get("stream") === "1") {
@@ -66,6 +79,7 @@
     captionCard.classList.add("fading");
     setTimeout(() => {
       if (captionCard.classList.contains("fading")) {
+        if (captionPrev) captionPrev.textContent = "";
         captionCommitted.textContent = "";
         captionLive.textContent = "";
         captionCard.classList.add("empty");
@@ -88,16 +102,29 @@
       fadeTimeout = null;
     }
 
-    captionCard.classList.remove("empty", "fading");
-
     if (data.type === "clear") {
       clearCaptions();
       return;
     }
 
+    if (data.type === "status") {
+      if (data.paused) {
+        setStatus("error", "PAUSED");
+        clearCaptions();
+      } else {
+        setStatus("connected", "Live Subtitles Ready");
+      }
+      return;
+    }
+
+    captionCard.classList.remove("empty", "fading");
     const cleanText = trimToMaxWords(data.text);
 
     if (data.is_final) {
+      // Shift previous sentence to upper line, and present finalized text
+      if (captionPrev && captionCommitted.textContent && captionCommitted.textContent !== cleanText) {
+        captionPrev.textContent = captionCommitted.textContent;
+      }
       captionCommitted.textContent = cleanText;
       captionLive.textContent = "";
     } else {

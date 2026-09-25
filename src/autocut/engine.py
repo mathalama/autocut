@@ -113,21 +113,33 @@ class RealtimeSubtitleEngine:
         device: str = DEFAULT_DEVICE,
         compute_type: str = DEFAULT_COMPUTE_TYPE,
         language: str = DEFAULT_LANGUAGE,
+        task: str = "transcribe",
+        initial_prompt: Optional[str] = "Live conversation, clean subtitles.",
         device_index: Optional[int] = None,
         energy_threshold: float = 0.015,
         on_caption: Optional[Callable[[str, bool], None]] = None,
         on_clear: Optional[Callable[[], None]] = None,
         on_level: Optional[Callable[[float], None]] = None,
+        on_status: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> None:
+        self.task = task
+        # Translation requires a multilingual model (cannot use English-only .en models)
+        if self.task == "translate" and model_name.endswith(".en"):
+            fallback = model_name[:-3]
+            logger.info("Translation requires multilingual model. Switching '%s' to '%s'.", model_name, fallback)
+            model_name = fallback
+
         self.model_name = model_name
         self.device = device
         self.compute_type = compute_type
         self.language = language
+        self.initial_prompt = initial_prompt
         self.device_index = device_index
         self.energy_threshold = energy_threshold
         self.on_caption = on_caption
         self.on_clear = on_clear
         self.on_level = on_level
+        self.on_status = on_status
 
         self.vad = VoiceActivityDetector(energy_threshold=self.energy_threshold)
         self.streamer = AudioStreamer(device_index=self.device_index)
@@ -137,7 +149,35 @@ class RealtimeSubtitleEngine:
         self._inference_lock = threading.Lock()
         self._adaptive_step = STEP_SECONDS
         self._running = False
+        self._paused = False
         self._thread: Optional[threading.Thread] = None
+
+    def pause(self) -> None:
+        """Pause subtitle capture and hide overlay."""
+        self._paused = True
+        if self.on_clear:
+            self.on_clear()
+        if self.on_status:
+            self.on_status({"paused": True})
+
+    def resume(self) -> None:
+        """Resume subtitle capture."""
+        self._paused = False
+        if self.on_status:
+            self.on_status({"paused": False})
+
+    def toggle_pause(self) -> bool:
+        """Toggle pause state. Returns True if now paused, False if resumed."""
+        if self._paused:
+            self.resume()
+            return False
+        else:
+            self.pause()
+            return True
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
 
     def load_model(self) -> None:
         """Load the faster-whisper model on configured device (with automatic CPU fallback on missing DLLs)."""
@@ -151,7 +191,7 @@ class RealtimeSubtitleEngine:
             # Warm-up check: verify CUDA libraries (cublas, cudnn) actually work
             dummy = np.zeros(1600, dtype=np.float32)
             lang = self.language if self.language and self.language != "auto" else None
-            list(self.model.transcribe(dummy, language=lang, beam_size=1)[0])
+            list(self.model.transcribe(dummy, language=lang, task=self.task, beam_size=1)[0])
         except Exception as e:
             if self.device == "cuda":
                 logger.warning("CUDA execution failed (%s). Falling back to high-performance CPU (int8)...", e)
@@ -176,6 +216,12 @@ class RealtimeSubtitleEngine:
 
         while self._running:
             time.sleep(0.02)  # 50Hz polling loop
+            if self._paused:
+                if is_speaking:
+                    is_speaking = False
+                    current_text = ""
+                continue
+
             now = time.time()
 
             # Read recent 100ms slice
@@ -213,6 +259,8 @@ class RealtimeSubtitleEngine:
                         segments, info = self.model.transcribe(
                             audio_window,
                             language=active_language,
+                            task=self.task,
+                            initial_prompt=self.initial_prompt,
                             beam_size=1,
                             no_speech_threshold=0.55,
                             condition_on_previous_text=False,
@@ -256,6 +304,8 @@ class RealtimeSubtitleEngine:
                         segments, _ = self.model.transcribe(
                             audio_window,
                             language=active_language,
+                            task=self.task,
+                            initial_prompt=self.initial_prompt,
                             beam_size=1,
                             no_speech_threshold=0.55,
                             condition_on_previous_text=False,
