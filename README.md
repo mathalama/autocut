@@ -1,261 +1,271 @@
-# 🎙️ AutoCut: Real-Time AI Subtitles, Live Translation & Video Silence Cutter
+# AutoCut: Real-Time AI Subtitles, Live Translation and Video Silence Cutter
 
-**AutoCut** — это высокопроизводительный локальный комплекс инструментов на базе **faster-whisper**, **CUDA** и **FFmpeg** для стримеров, подкастеров, лекторов и видеоблогеров.
+AutoCut is a high-performance local audio and video toolkit powered by faster-whisper, NVIDIA CUDA acceleration, and FFmpeg.
 
-Проект объединяет две мощные системы:
-1. **Live Subtitles & Translation Engine** — генерация субтитров и синхронный перевод речи в реальном времени с ультра-низкой задержкой (~150–250 мс) для **OBS Studio**, Twitch, YouTube и записи скринкастов.
-2. **Video Silence Cutter** — интеллектуальный автомонтаж готовых видеозаписей с автоматическим вырезанием пауз, вздохов и неловкой тишины с точностью до кадра.
-
----
-
-## 📑 Содержание
-
-- [⚡ Быстрый старт (1 клик для Windows)](#-быстрый-старт-1-клик-для-windows)
-- [🧠 Архитектура и как это работает](#-архитектура-и-как-это-работает)
-- [🔴 Функция 1: Живые субтитры (autocut live)](#-функция-1-живые-субтитры-autocut-live)
-- [🌐 Функция 2: Синхронный перевод на лету (--translate)](#-функция-2-синхронный-перевод-на-лету---translate)
-- [⌨ Функция 3: Глобальный хоткей паузы (Mute/Resume)](#-функция-3-глобальный-хоткей-паузы-muteresume)
-- [📺 Функция 4: Оверлей для OBS и кастомизация стилей](#-функция-4-оверлей-для-obs-и-кастомизация-стилей)
-- [✂ Функция 5: Автомонтаж видео (autocut cut)](#-функция-5-автомонтаж-видео-autocut-cut)
-- [🎙️ Функция 6: Управление микрофонами (autocut devices)](#️-функция-6-управление-микрофонами-autocut-devices)
-- [⚙ Полный справочник параметров CLI](#-полный-справочник-параметров-cli)
-- [🛠 Устранение неполадок и советы](#-устранение-неполадок-и-советы)
+It provides two core systems:
+1. **Live Subtitles and Translation Engine**: Real-time caption generation and instant spoken translation with ultra-low latency (~150-250 ms) designed for OBS Studio, Twitch, YouTube, and live screencasts.
+2. **Video Silence Cutter**: Automated video editing engine that removes dead air, breath pauses, and silence gaps from recordings with frame-accurate precision.
 
 ---
 
-## ⚡ Быстрый старт (1 клик для Windows)
+## Table of Contents
 
-В корневой папке проекта подготовлены готовые bat-скрипты, которые запускают движок и **автоматически копируют ссылку для OBS в буфер обмена Windows**:
+- [Quick Start (Windows 1-Click)](#quick-start-windows-1-click)
+- [Architecture and Pipeline](#architecture-and-pipeline)
+- [Feature 1: Real-Time Live Subtitles (autocut live)](#feature-1-real-time-live-subtitles-autocut-live)
+- [Feature 2: Real-Time Live Translation (--translate)](#feature-2-real-time-live-translation---translate)
+- [Feature 3: Global Hotkey Pause (Mute / Resume)](#feature-3-global-hotkey-pause-mute--resume)
+- [Feature 4: OBS Browser Source Overlay and Styling](#feature-4-obs-browser-source-overlay-and-styling)
+- [Feature 5: Video Silence Cutter (autocut cut)](#feature-5-video-silence-cutter-autocut-cut)
+- [Feature 6: Audio Input Device Management (autocut devices)](#feature-6-audio-input-device-management-autocut-devices)
+- [CLI Reference](#cli-reference)
+- [Performance Tuning and Troubleshooting](#performance-tuning-and-troubleshooting)
+- [License](#license)
 
-| Файл | Назначение |
+---
+
+## Quick Start (Windows 1-Click)
+
+The repository root includes pre-configured batch scripts that start the engine and automatically copy the OBS Browser Source URL directly to your Windows clipboard:
+
+| Script | Purpose |
 |---|---|
-| **`run_live.bat`** | Запуск живых субтитров (английский по умолчанию, модель `small.en`). Ссылка в буфере! |
-| **`run_live_translate.bat`** | Запуск **живого перевода**: вы говорите по-русски — на экране OBS субтитры идут на английском! |
+| **run_live.bat** | Starts live transcription (English default, `small.en` model). Copies overlay URL to clipboard. |
+| **run_live_translate.bat** | Starts real-time translation: speak any language (e.g., Russian), and English subtitles render live on screen. |
 
-Просто кликните дважды по нужному файлу, откройте OBS, вставьте ссылку в Browser Source — и всё готово к эфиру.
+Double-click the script, paste the URL into your OBS Browser Source, and your broadcast subtitles are ready immediately.
 
 ---
 
-## 🧠 Архитектура и как это работает
+## Architecture and Pipeline
 
 ```
- Микрофон (sounddevice / 16 кГц)
-       │  [Потоковый кольцевой буфер 50 мс]
+ Microphone (sounddevice / 16 kHz)
+       │  [Pre-allocated circular buffer, 50 ms chunks]
        ▼
- Динамический шумовой порог (vad.py)
-       │  [25-й перцентиль шума, адаптация под кулеры и фон]
-       ├──(Тишина/Фон)──> [0% нагрузки на GPU, пропуск инференса]
+ Dynamic Noise Floor VAD (vad.py)
+       │  [Rolling 25th percentile baseline tracking]
+       ├──(Silence / Fan Hum)──> [0% GPU load, inference skipped]
        │
-       ▼ (Обнаружен реальный голос)
+       ▼ (Audible voice detected)
  faster-whisper + CTranslate2 (CUDA FP16)
-       │  [Предзагрузка DLL: cublas64_12, инференс 80-120 мс]
+       │  [Preloaded DLL handles: cublas64_12, 80-120 ms inference]
        ├─────────────────────────────────┐
        ▼                                 ▼
- Local WebSocket / HTTP Server      Запись в captions.srt
- (:8765, неблокирующий broadcast)    (Таймкоды с точностью до мс)
+ Local WebSocket / HTTP Server      Session Recorder (captions.srt)
+ (:8765, non-blocking broadcast)     (Millisecond-accurate timecodes)
        │
        ▼
  OBS Browser Source Overlay
- (2-строчные Rolling Captions, плашка, CSS)
+ (2-line rolling subtitles, high-contrast container, vanilla CSS)
 ```
 
-1. **Захват звука без блокировок**: Модуль `AudioStreamer` с кольцевым буфером `CircularAudioBuffer` выделяет память один раз при старте, исключая сборщик мусора Python (Zero GC-pause).
-2. **Динамический шумовой порог**: В `vad.py` встроен плавающий анализ фона. Если ваш микрофон фонит, шумит кулер или системный блок, алгоритм калибрует уровень шума и не путает постоянный гул с речью.
-3. **Аппаратная акселерация CUDA**: На Windows библиотеки `cublas64_12.dll` предзагружаются напрямую в адресное пространство процесса до импорта нейросети, гарантируя запуск на видеокарте с минимальной задержкой.
-4. **Стриминг текста**: Пока вы говорите, промежуточный текст (`●`) выводится каждые 150 мс. При паузе 0.6 с фраза фиксируется (`✔ Final`) и плавно поднимается на верхнюю строку оверлея.
+1. **Zero-Allocation Audio Ingest**: `AudioStreamer` utilizes a pre-allocated `CircularAudioBuffer`. Memory is locked at initialization, preventing garbage collector pauses during live streaming.
+2. **Dynamic Noise Floor Tracking**: `vad.py` maintains a rolling energy history across recent 100 ms audio frames and continuously tracks the 25th percentile. Background fan noise and microphone hiss are treated as baseline floor rather than speech.
+3. **Hardware Acceleration**: Windows CUDA libraries (`cublas64_12.dll`, `cublasLt64_12.dll`, and `nvrtc`) are preloaded into process memory via ctypes before CTranslate2 initialization, ensuring immediate GPU offloading without DLL load failures.
+4. **Low-Latency Streaming**: Intermediate tokens are dispatched every 150 ms while speaking. When a 0.6-second pause occurs, the phrase is finalized, committed to `captions.srt`, and rolled onto the upper line of the overlay.
 
 ---
 
-## 🔴 Функция 1: Живые субтитры (`autocut live`)
+## Feature 1: Real-Time Live Subtitles (autocut live)
 
-Базовый режим генерации субтитров в реальном времени.
+The core live engine transcribes spoken audio into text with low latency.
 
 ```powershell
-# Запуск со стандартными параметрами (английский, модель small.en, видеокарта CUDA)
+# Default English setup (CUDA, small.en model, 150 ms step)
 .\.venv\Scripts\autocut.exe live
 
-# Запуск для русской речи (модель base или small, язык ru)
+# Russian speech recognition using multilingual model
 .\.venv\Scripts\autocut.exe live -l ru -m small
 
-# Запуск с повышенным порогом шумоподавления (если микрофон сильно шумит)
+# Custom noise gate for loud or noisy microphone hardware
 .\.venv\Scripts\autocut.exe live --energy-threshold 0.025
 ```
 
-### Что происходит во время работы:
-- В терминале отображается живой статус (`● текущие слова` и `✔ зафиксированные предложения`).
-- Все фразы автоматически пишутся в файл `captions.srt` с точными таймкодами для последующего монтажа в Premiere Pro, DaVinci Resolve или CapCut.
+### Runtime Behavior:
+- The terminal displays live progress tokens (`interim words`) and final sentences (`[Final]`).
+- Subtitles are streamed to the OBS browser overlay and recorded to `captions.srt` with synchronized timestamps.
 
 ---
 
-## 🌐 Функция 2: Синхронный перевод на лету (`--translate`)
+## Feature 2: Real-Time Live Translation (--translate)
 
-Революционная возможность для стримеров, желающих привлечь международную аудиторию:
+Allows streamers to broadcast to international audiences:
 
-- **Как это работает**: Вы говорите на своем родном языке (русском, испанском, немецком, японском и др.), а Whisper на лету выполняет машинный перевод и выводит субтитры в OBS **на чистом английском языке**!
-- Движок автоматически переключается на мультиязычные модели (`small` или `base`).
+- **How it works**: Speak in your native language (Russian, Spanish, German, Japanese, etc.), and the Whisper decoder outputs fluent English subtitles live in OBS.
+- The engine automatically resolves `.en` models to multilingual variants (`small` or `base`) when translation is requested.
 
 ```powershell
-# Говорим по-русски — в OBS субтитры выводятся на английском:
+# Speak Russian, render English subtitles on stream:
 .\.venv\Scripts\autocut.exe live --translate -l ru -m small
 
-# Либо через ярлык в корне:
+# Alternatively, use the 1-click Windows launcher:
 run_live_translate.bat
 ```
 
 ---
 
-## ⌨ Функция 3: Глобальный хоткей паузы (Mute/Resume)
+## Feature 3: Global Hotkey Pause (Mute / Resume)
 
-Стримерам часто нужно временно заглушить субтитры (телефонный звонок, разговор с домашними, перерыв на воду).
+Streamers often need to temporarily mute subtitles during private conversations, phone calls, or breaks.
 
-- **Горячая клавиша по умолчанию**: **`F9`**
-- **Как работает**:
-  - Работает **глобально** — не нужно сворачивать игру или переключаться на окно терминала.
-  - Первое нажатие `F9`: оверлей моментально очищается, в терминале загорается `[⏸ Subtitles PAUSED]`, обработка микрофона останавливается.
-  - Второе нажатие `F9`: трансляция возобновляется `[▶ Subtitles RESUMED]`.
-- **Смена клавиши**:
+- **Default Key**: `F9`
+- **Behavior**:
+  - The hotkey is hooked globally using the Windows keyboard API. It functions inside full-screen games and third-party apps without needing to switch windows.
+  - First press: Captions are cleared from OBS, audio inference pauses, and the terminal displays `[PAUSED]`.
+  - Second press: Captions resume immediately with `[RESUMED]`.
+- **Custom Hotkey Binding**:
   ```powershell
-  # Назначить на клавишу Pause, F10 или ScrollLock
   .\.venv\Scripts\autocut.exe live --hotkey pause
   .\.venv\Scripts\autocut.exe live --hotkey f10
   ```
 
 ---
 
-## 📺 Функция 4: Оверлей для OBS и кастомизация стилей
+## Feature 4: OBS Browser Source Overlay and Styling
 
-Субтитры оформлены в профессиональном **двухстрочном стиле (Rolling Subtitles)**:
-- Верхняя строка: предыдущее предложение (слегка приглушенное, для контекста).
-- Нижняя строка: текущие произносимые слова в реальном времени.
+The frontend uses a 2-line rolling layout:
+- **Line 1 (Upper)**: The previously finalized sentence, rendered at slight opacity for reading context.
+- **Line 2 (Lower)**: Current live sentence streaming in real time.
 
-### Подключение в OBS Studio:
-1. В источниках сцены нажмите `+` ➔ **«Браузер» (Browser)**.
-2. В поле **URL** укажите локальный адрес (см. примеры ниже).
-3. Задайте ширину **`1920`** и высоту **`1080`**.
-4. Поставьте галочку **«Обновлять браузер, когда сцена становится активной»**.
+### OBS Studio Setup:
+1. In OBS, click `+` under **Sources** and select **Browser**.
+2. Paste the target URL into the **URL** field.
+3. Set **Width** to `1920` and **Height** to `1080`.
+4. Check **Shutdown source when not visible** and **Refresh browser when scene becomes active**.
 
-### Управление внешним видом через URL-параметры:
+### URL Parameters Reference:
 
-Все параметры стилей настраиваются на лету прямо в ссылке OBS без перезапуска скрипта:
+All visual parameters are configured via URL query parameters without restarting the server:
 
-| Желаемый стиль | URL для OBS Browser Source |
+| Style Goal | URL |
 |---|---|
-| **Классический (Стандарт)**<br>Белый текст на аккуратной черной плашке | `http://localhost:8765/?theme=standard&size=28` |
-| **Черный текст на белом фоне**<br>Высококонтрастный режим для светлых сцен | `http://localhost:8765/?theme=black&size=28` |
-| **Без фона (Контурный текст)**<br>Чистый белый текст с глубокой черной обводкой | `http://localhost:8765/?theme=outline&size=32` |
-| **Желтые субтитры (Cinema style)**<br>Классический цвет субтитров кино и ТВ | `http://localhost:8765/?theme=yellow&size=28` |
-| **Расположение вверху экрана** | `http://localhost:8765/?theme=standard&pos=top` |
-| **Расположение по центру экрана** | `http://localhost:8765/?theme=standard&pos=center` |
-| **Крупный размер шрифта (например, 40px)** | `http://localhost:8765/?size=40` |
-| **Полная ручная кастомизация**<br>(размер, цвета текста, фона и выравнивание) | `http://localhost:8765/?color=yellow&bg=rgba(0,0,0,0.85)&size=32&align=center` |
+| **Standard (Default)**<br>Crisp white text on dark plate (rgba 0, 0, 0, 0.78) | `http://localhost:8765/?theme=standard&size=28` |
+| **Black on White**<br>High-contrast dark text on bright plate | `http://localhost:8765/?theme=black&size=28` |
+| **Outline Mode**<br>White text with deep black stroke, transparent background | `http://localhost:8765/?theme=outline&size=32` |
+| **Yellow Subtitles**<br>Classic broadcast cinema yellow on dark background | `http://localhost:8765/?theme=yellow&size=28` |
+| **Top Screen Position** | `http://localhost:8765/?theme=standard&pos=top` |
+| **Center Screen Position** | `http://localhost:8765/?theme=standard&pos=center` |
+| **Custom Size** | `http://localhost:8765/?size=38` |
+| **Fully Customized**<br>(custom text color, background, font size, alignment) | `http://localhost:8765/?color=yellow&bg=rgba(0,0,0,0.85)&size=32&align=center` |
 
 ---
 
-## ✂ Функция 5: Автомонтаж видео (`autocut cut`)
+## Feature 5: Video Silence Cutter (autocut cut)
 
-Функция для авторов контента (YouTube, Shorts, подкасты, лекции). Автоматически вырезает все неловкие паузы, запинки и участки молчания из готовых записей.
+Automated editing tool for YouTube videos, podcasts, and screencasts. It detects silence and dead air, cuts unnecessary pauses, and splices the media with frame accuracy.
 
 ```powershell
-# Базовый вырез тишины:
-.\.venv\Scripts\autocut.exe cut raw_screencast.mp4 -o final_video.mp4
+# Basic silence removal:
+.\.venv\Scripts\autocut.exe cut raw_recording.mp4 -o trimmed_video.mp4
 ```
 
-### Расширенные параметры монтажа:
+### Advanced Cutting Parameters:
 
 ```powershell
-# Вырезать паузы длиннее 0.5 сек, оставить отступ 120 мс вокруг слов и сохранить синхронные субтитры:
+# Cut gaps longer than 0.5s, keep 120 ms audio padding, and export synchronized SRT:
 .\.venv\Scripts\autocut.exe cut input.mp4 -o output.mp4 --pause-threshold 0.5 --margin 0.12 --output-srt output.srt
 ```
 
-### Преимущества алгоритма:
-- **Sample-accurate монтаж**: Использует FFmpeg `filter_complex` (`trim` + `atrim` + `concat`). Видео и аудиоряд не рассинхронизируются даже на часовых записях.
-- **Интеллектуальный запас (Margin)**: Вокруг каждого фрагмента речи оставляется небольшой настраиваемый запас (по умолчанию `±0.15 с`), поэтому начала и концы слов никогда не «съедаются».
-- **Синхронизация SRT**: Если указан `--output-srt`, генерируется новый файл субтитров, временные метки которого идеально подогнаны под хронометраж нарезанного видео.
-- **Подробный отчет**: По окончании выводится карточка: сколько времени сэкономлено, процент сокращения и число склеек.
+### Technical Highlights:
+- **Sample-Accurate Splicing**: Generates an FFmpeg `filter_complex` pipeline using paired `trim`/`atrim` and `concat` operations. Audio and video tracks stay perfectly in sync over long files.
+- **Speech Padding Margin**: Adds configurable margins (`margin=0.15s` by default) around every speech interval to prevent clipped syllables.
+- **Synchronized Subtitles**: If `--output-srt` is supplied, speech timestamps are automatically remapped to match the newly edited timeline.
+- **Detailed Summary**: Prints duration before and after, time saved, reduction percentage, and segment count.
 
 ---
 
-## 🎙️ Функция 6: Управление микрофонами (`autocut devices`)
+## Feature 6: Audio Input Device Management (autocut devices)
 
-Если к компьютеру подключено несколько микрофонов (USB-микрофон, гарнитура, веб-камера), вы можете просмотреть их список:
+To inspect connected audio interfaces (USB microphones, interfaces, headsets):
 
 ```powershell
 .\.venv\Scripts\autocut.exe devices
 ```
 
-Вывод команды:
+Example output:
 ```
 ┏━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┓
 ┃ Index ┃ Device Name                    ┃ Channels ┃ SampleRate ┃ Default ┃
 ┡━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━┩
-│ 1     │ Микрофон (HyperX QuadCast)     │ 2        │ 48000 Hz   │ ★ YES   │
-│ 3     │ Микрофон (HD Pro Webcam C920)  │ 2        │ 16000 Hz   │         │
+│ 1     │ Microphone (HyperX QuadCast)   │ 2        │ 48000 Hz   │ YES     │
+│ 3     │ Microphone (HD Pro Webcam C920)│ 2        │ 16000 Hz   │         │
 └───────┴────────────────────────────────┴──────────┴────────────┴─────────┘
 ```
 
-Чтобы привязать трансляцию к конкретному микрофону, укажите его индекс:
+Bind the engine to a specific input device index:
 ```powershell
 .\.venv\Scripts\autocut.exe live --device-index 1
 ```
 
 ---
 
-## ⚙ Полный справочник параметров CLI
+## CLI Reference
 
-### Команда `autocut live`
+### Command: autocut live
 ```
-Параметры:
-  -m, --model TEXT            Модель Whisper: 'small.en', 'tiny.en', 'base', 'small', 'medium' [default: small.en]
-  -d, --device TEXT           Устройство инференса: 'cuda' или 'cpu' [default: cuda]
-  --compute-type TEXT         Квантование: 'float16', 'int8', 'float32' [default: float16]
-  -l, --language TEXT         Код языка: 'en', 'ru', 'auto' и др. [default: en]
-  -T, --translate             Включить живой перевод на английский язык в реальном времени
-  -k, --hotkey TEXT           Глобальная клавиша паузы/возобновления субтитров [default: f9]
-  --energy-threshold FLOAT    Порог шумоподавления VAD (0.015-0.035 для шумных микрофонов) [default: 0.015]
-  -p, --port INTEGER          Порт HTTP и WebSocket сервера для OBS [default: 8765]
-  --device-index INTEGER      Индекс конкретного микрофона из 'autocut devices'
-  -o, --output-srt PATH       Путь для сохранения субтитров сессии [default: captions.srt]
-  -t, --theme TEXT            Тема оверлея: 'standard', 'black', 'outline', 'yellow' [default: standard]
-  -s, --size INTEGER          Размер шрифта в пикселях [default: 28]
+Usage: autocut live [OPTIONS]
+
+Options:
+  -m, --model TEXT            Whisper model name: 'small.en', 'tiny.en', 'base', 'small', 'medium' [default: small.en]
+  -d, --device TEXT           Inference device: 'cuda' or 'cpu' [default: cuda]
+  --compute-type TEXT         Quantization: 'float16', 'int8', 'float32' [default: float16]
+  -l, --language TEXT         Language code: 'en', 'ru', 'auto', etc. [default: en]
+  -T, --translate             Enable real-time spoken translation to English
+  -k, --hotkey TEXT           Global hotkey to toggle pause/mute [default: f9]
+  --energy-threshold FLOAT    VAD noise floor threshold (0.015-0.035 for noisy mics) [default: 0.015]
+  -p, --port INTEGER          Server port for HTTP and WebSocket [default: 8765]
+  --device-index INTEGER      Microphone index from 'autocut devices'
+  -o, --output-srt PATH       Path to record subtitle session [default: captions.srt]
+  -t, --theme TEXT            Overlay theme: 'standard', 'black', 'outline', 'yellow' [default: standard]
+  -s, --size INTEGER          Overlay font size in pixels [default: 28]
+  --help                      Show this message and exit.
 ```
 
-### Команда `autocut cut`
+### Command: autocut cut
 ```
-Аргументы:
-  INPUT_VIDEO                 Путь к исходному файлу видео или аудио (MP4, MKV, MOV, WAV) [обязательный]
+Usage: autocut cut [OPTIONS] INPUT_VIDEO
 
-Параметры:
-  -o, --output PATH           Путь к готовому нарезанному файлу [по умолчанию: {имя}_cut.mp4]
-  -m, --model TEXT            Модель Whisper для анализа [default: base]
-  -d, --device TEXT           'cuda' или 'cpu' [default: cuda]
-  -p, --pause-threshold FLOAT Минимальная длительность тишины для вырезания в секундах [default: 0.6]
-  --margin FLOAT              Запас звука вокруг каждого слова в секундах [default: 0.15]
-  -l, --language TEXT         Язык речи ('en', 'ru')
-  --output-srt PATH           Путь для экспорта синхронизированных субтитров
+Arguments:
+  INPUT_VIDEO                 Path to input video or audio file (MP4, MKV, MOV, WAV) [required]
+
+Options:
+  -o, --output PATH           Path to export cut file [default: {name}_cut.mp4]
+  -m, --model TEXT            Whisper model for detection [default: base]
+  -d, --device TEXT           'cuda' or 'cpu' [default: cuda]
+  -p, --pause-threshold FLOAT Minimum silence duration in seconds to cut out [default: 0.6]
+  --margin FLOAT              Audio padding margin around speech in seconds [default: 0.15]
+  -l, --language TEXT         Spoken language code ('en', 'ru', etc.)
+  --output-srt PATH           Path to export synchronized subtitles
+  --help                      Show this message and exit.
 ```
 
 ---
 
-## 🛠 Устранение неполадок и советы
+## Performance Tuning and Troubleshooting
 
-### 1. Как убедиться, что видеокарта (CUDA) задействована?
-При запуске `autocut live` в терминале выводится панель:  
-`Device: cuda (float16)`  
-Если CUDA недоступна (например, отсутствуют драйверы NVIDIA), движок автоматически перейдет на процессор (`cpu (int8)`), выведя предупреждение в лог.
+### 1. Verifying CUDA Acceleration
+When starting `autocut live`, check the status banner:
+```
+Device: cuda (float16)
+```
+If CUDA libraries are missing or an unsupported GPU is present, the engine logs a warning and automatically falls back to CPU quantization (`cpu (int8)`).
 
-### 2. Если микрофон шумит или кулер гудит
-Если в тишине проскакивают случайные слова или точки:
-- Повысьте порог энергии через аргумент:  
-  `.\.venv\Scripts\autocut.exe live --energy-threshold 0.025`
+### 2. High Microphone Noise or Fan Hum
+If random tokens or phantom periods appear during silence:
+- Increase the noise threshold:
+  ```powershell
+  .\.venv\Scripts\autocut.exe live --energy-threshold 0.025
+  ```
 
-### 3. Какую модель Whisper выбрать?
-- **`small.en`** *(по умолчанию для английского)*: Идеальный баланс точности и скорости (инференс ~100 мс на GPU).
-- **`base`** *(мультиязычная)*: Самая быстрая (инференс ~60 мс), отлично подходит для быстрого монтажа через `autocut cut`.
-- **`small`** *(мультиязычная)*: Лучший выбор для качественного распознавания русской речи и перевода (`--translate`).
-- **`large-v3-turbo`**: Максимальная точность для сложных терминов и тихого шепота (требует от 3 ГБ VRAM).
+### 3. Whisper Model Recommendations
+- **small.en** (Default for English): Best speed-to-accuracy ratio on GPU (~100 ms per chunk).
+- **base** (Multilingual): Fastest multilingual model (~60 ms on GPU). Ideal for video silence cutting (`autocut cut`).
+- **small** (Multilingual): Recommended for Russian recognition and real-time translation (`--translate`).
+- **large-v3-turbo**: Maximum vocabulary capacity for technical terms and whisper audio (requires ~3 GB VRAM).
 
 ---
 
-## 📄 Лицензия
+## License
 
-MIT License — свободное использование для личных и коммерческих стримов, видео и подкастов.
+MIT License. Free for personal, educational, and commercial streaming, recording, and broadcasting.
