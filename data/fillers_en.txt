@@ -1,5 +1,0 @@
-always	um
-always	uh
-always	uhm
-contextual	like
-contextual	you know

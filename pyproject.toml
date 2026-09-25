@@ -1,32 +1,22 @@
 [build-system]
-requires = ["hatchling==1.28.0"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
 name = "autocut"
-version = "0.0.0"
-description = "CLI skeleton for non-destructive screencast editing."
+version = "0.1.0"
+description = "Real-time AI subtitles and captions engine for OBS and live recording."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 dependencies = [
-  "pydantic==2.13.5",
-  "typer==0.27.2",
-]
-
-[project.optional-dependencies]
-# Kept optional until the corresponding implementation stage to avoid pulling
-# PyTorch/CTranslate2 during Stage 0.
-pipeline = [
-  "faster-whisper==1.2.1",
+  "faster-whisper>=1.2.0",
   "numpy>=2.0.0",
-  "obsws-python>=1.8.0",
-  "opentimelineio==0.18.1",
-  "pynput>=1.8.2",
-  "pysubs2==1.8.0",
+  "pydantic>=2.10.0",
+  "rich>=13.0.0",
+  "sounddevice>=0.5.0",
+  "typer>=0.15.0",
+  "websockets>=13.0.0",
 ]
-comparison = ["auto-editor==29.3.1"]
-timing = ["stable-ts==2.19.1"]
-dev = ["pytest==8.3.5"]
 
 [project.scripts]
 autocut = "autocut.cli:main"
