@@ -12,14 +12,28 @@
 
   // Read URL query parameters for customization
   const urlParams = new URLSearchParams(window.location.search);
-  const theme = urlParams.get("theme"); // neon, cinema, minimal, glass
-  if (theme) {
-    document.body.className = `theme-${theme}`;
-  }
+  const theme = urlParams.get("theme") || "standard";
+  document.body.className = `theme-${theme}`;
 
   const customSize = urlParams.get("size");
   if (customSize) {
-    document.documentElement.style.setProperty("--font-size", `${customSize}px`);
+    document.documentElement.style.setProperty("--font-size", `${parseInt(customSize, 10)}px`);
+  }
+
+  const customColor = urlParams.get("color");
+  if (customColor) {
+    document.documentElement.style.setProperty("--text-color", customColor);
+  }
+
+  const customBg = urlParams.get("bg");
+  if (customBg) {
+    const resolvedBg = (customBg === "none" || customBg === "transparent") ? "transparent" : customBg;
+    document.documentElement.style.setProperty("--bg-color", resolvedBg);
+  }
+
+  const customAlign = urlParams.get("align");
+  if (customAlign) {
+    captionCard.style.textAlign = customAlign;
   }
 
   if (urlParams.get("hideStatus") === "1" || urlParams.get("stream") === "1") {

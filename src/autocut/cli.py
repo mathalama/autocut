@@ -67,7 +67,7 @@ def live_command(
     device_index: Optional[int] = typer.Option(None, "--device-index", help="Microphone index from 'autocut devices'."),
     output_srt: Optional[Path] = typer.Option(Path("captions.srt"), "--output-srt", "-o", help="File to record subtitles in SRT format."),
     energy_threshold: float = typer.Option(0.015, "--energy-threshold", help="Microphone noise gate threshold (increase to 0.02-0.03 for noisy mics)."),
-    theme: str = typer.Option("glass", "--theme", "-t", help="Overlay theme: 'glass', 'neon', 'cinema', 'minimal'."),
+    theme: str = typer.Option("standard", "--theme", "-t", help="Overlay theme: 'standard' (white on black), 'black' (black on white), 'outline' (no bg)."),
     size: int = typer.Option(28, "--size", "-s", help="Font size in pixels for the overlay."),
 ) -> None:
     """Start real-time subtitle generation with OBS Browser Source overlay."""
