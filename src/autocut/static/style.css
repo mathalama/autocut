@@ -116,18 +116,9 @@ html, body {
   display: block;
 }
 
+.caption-text,
 .caption-committed {
   color: var(--text-color);
-}
-
-.caption-live {
-  color: var(--text-color);
-  opacity: 0.85;
-  margin-left: 4px;
-}
-
-.caption-live:empty {
-  margin-left: 0;
 }
 
 /* STANDARD PRESETS */

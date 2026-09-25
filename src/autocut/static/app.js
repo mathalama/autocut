@@ -9,8 +9,7 @@
   const captionContainer = document.getElementById("caption-container");
   const captionCard = document.getElementById("caption-card");
   const captionPrev = document.getElementById("caption-prev");
-  const captionCommitted = document.getElementById("caption-committed");
-  const captionLive = document.getElementById("caption-live");
+  const captionText = document.getElementById("caption-text") || document.getElementById("caption-committed");
 
   // Read URL query parameters for customization
   const urlParams = new URLSearchParams(window.location.search);
@@ -80,12 +79,11 @@
     setTimeout(() => {
       if (captionCard.classList.contains("fading")) {
         if (captionPrev) captionPrev.textContent = "";
-        captionCommitted.textContent = "";
-        captionLive.textContent = "";
+        if (captionText) captionText.textContent = "";
         captionCard.classList.add("empty");
         captionCard.classList.remove("fading");
       }
-    }, 500);
+    }, 400);
   }
 
   function trimToMaxWords(text) {
@@ -118,24 +116,15 @@
     }
 
     captionCard.classList.remove("empty", "fading");
-    const cleanText = trimToMaxWords(data.text);
+    const clean = trimToMaxWords(data.text);
+    if (!clean) return;
 
-    if (data.is_final) {
-      // Shift previous sentence to upper line, and present finalized text
-      if (captionPrev && captionCommitted.textContent && captionCommitted.textContent !== cleanText) {
-        captionPrev.textContent = captionCommitted.textContent;
-      }
-      captionCommitted.textContent = cleanText;
-      captionLive.textContent = "";
-    } else {
-      const lastSpaceIdx = cleanText.lastIndexOf(" ");
-      if (lastSpaceIdx !== -1) {
-        captionCommitted.textContent = cleanText.slice(0, lastSpaceIdx + 1);
-        captionLive.textContent = cleanText.slice(lastSpaceIdx + 1);
-      } else {
-        captionCommitted.textContent = "";
-        captionLive.textContent = cleanText;
-      }
+    // Shift previous sentence to upper line, and present new finalized text
+    if (captionPrev && captionText && captionText.textContent && captionText.textContent !== clean) {
+      captionPrev.textContent = captionText.textContent;
+    }
+    if (captionText) {
+      captionText.textContent = clean;
     }
   }
 

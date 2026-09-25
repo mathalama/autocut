@@ -1,19 +1,13 @@
 @echo off
 chcp 65001 >nul
-title AutoCut - Real-Time Live Subtitles
+title AutoCut - High-Accuracy Studio Subtitles (Higgs STT / Whisper)
 
 echo ========================================================
-echo   AutoCut Live Subtitles Engine
+echo   AutoCut Studio Subtitle Recorder (Main Feature)
 echo ========================================================
 echo.
-
-set URL=http://localhost:8765/?theme=standard^&size=28
-powershell -Command "Set-Clipboard -Value '%URL%'" 2>nul
-
-echo [INFO] OBS Browser Source URL copied to clipboard:
-echo        %URL%
-echo.
-echo [TIP]  Press F9 anytime to MUTE / RESUME subtitles!
+echo [INFO]  Speak into your microphone.
+echo [TIP]   Press F9 or ENTER when finished to STOP and generate subtitles!
 echo.
 
 if not exist ".venv\Scripts\autocut.exe" (
@@ -22,7 +16,7 @@ if not exist ".venv\Scripts\autocut.exe" (
 )
 
 if exist ".venv\Scripts\autocut.exe" (
-    .\.venv\Scripts\autocut.exe live
+    .\.venv\Scripts\autocut.exe record --engine higgs
 ) else (
     echo [ERROR] Installation was cancelled or not completed.
     pause

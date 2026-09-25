@@ -3,13 +3,18 @@
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 import numpy as np
 import sounddevice as sd
 
 from autocut.config import BLOCK_SIZE, CHANNELS, SAMPLE_RATE
 
 logger = logging.getLogger(__name__)
+
+
+class MicrophoneAccessError(RuntimeError):
+    """Raised when the audio recording interface cannot open the microphone."""
+    pass
 
 
 def list_input_devices() -> list[dict[str, Any]]:
@@ -131,16 +136,23 @@ class AudioStreamer:
                 pass
             self._stream = None
 
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            blocksize=self.block_size,
-            device=self.device_index,
-            channels=CHANNELS,
-            dtype="float32",
-            callback=self._callback,
-        )
-        self._stream.start()
-        self._last_audio_timestamp = time.time()
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.block_size,
+                device=self.device_index,
+                channels=CHANNELS,
+                dtype="float32",
+                callback=self._callback,
+            )
+            self._stream.start()
+            self._last_audio_timestamp = time.time()
+        except Exception as e:
+            raise MicrophoneAccessError(
+                f"Cannot open microphone input: {e}\n"
+                "  Check Windows Settings -> Privacy -> Microphone ('Let apps access your microphone').\n"
+                "  Run 'autocut devices' to choose a valid input device."
+            ) from e
 
     def _watchdog_loop(self) -> None:
         """Monitors audio stream health and re-establishes broken or stalled streams."""
@@ -187,3 +199,79 @@ class AudioStreamer:
 
     def is_active(self) -> bool:
         return self._running
+
+
+class MicrophoneRecorder:
+    """Records microphone audio into a contiguous 16kHz float32 numpy array."""
+
+    def __init__(
+        self,
+        sample_rate: int = SAMPLE_RATE,
+        device_index: Optional[int] = None,
+        on_chunk: Optional[Callable[[np.ndarray], None]] = None,
+    ) -> None:
+        self.sample_rate = sample_rate
+        self.device_index = device_index
+        self.on_chunk = on_chunk
+        self._chunks: list[np.ndarray] = []
+        self._stream: Optional[sd.InputStream] = None
+        self._recording = False
+        self._lock = threading.Lock()
+
+    def _callback(self, indata: np.ndarray, frames: int, time_info: Any, status: sd.CallbackFlags) -> None:
+        if indata.ndim > 1 and indata.shape[1] > 1:
+            mono = np.mean(indata, axis=1)
+        else:
+            mono = indata.flatten()
+        copy_chunk = mono.copy()
+        with self._lock:
+            if self._recording:
+                self._chunks.append(copy_chunk)
+        if self.on_chunk and self._recording:
+            try:
+                self.on_chunk(copy_chunk)
+            except Exception:
+                pass
+
+    def start(self) -> None:
+        """Start capturing microphone audio."""
+        with self._lock:
+            self._chunks.clear()
+            self._recording = True
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=CHANNELS,
+                device=self.device_index,
+                dtype="float32",
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception as e:
+            with self._lock:
+                self._recording = False
+            raise MicrophoneAccessError(
+                f"Cannot access microphone device: {e}\n"
+                "  Check Windows Settings -> Privacy -> Microphone ('Let desktop apps access your microphone').\n"
+                "  Run 'autocut devices' to choose a valid input device."
+            ) from e
+
+    def stop(self) -> np.ndarray:
+        """Stop capturing and return the recorded audio as float32 numpy array."""
+        with self._lock:
+            self._recording = False
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        with self._lock:
+            if not self._chunks:
+                return np.zeros(0, dtype=np.float32)
+            return np.concatenate(self._chunks)
+
+    @property
+    def is_recording(self) -> bool:
+        return self._recording

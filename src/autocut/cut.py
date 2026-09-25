@@ -12,8 +12,19 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def check_ffmpeg_installed() -> bool:
+    """Check if ffmpeg and ffprobe are available on system PATH."""
+    import shutil
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
 def get_media_duration(file_path: Path) -> float:
     """Extract media duration in seconds using ffprobe."""
+    if not check_ffmpeg_installed():
+        raise RuntimeError(
+            "FFmpeg / FFprobe was not found on your system PATH.\n"
+            "Please install FFmpeg (e.g. run 'winget install Gyan.FFmpeg') or add ffmpeg.exe to PATH."
+        )
     cmd = [
         "ffprobe",
         "-v", "error",
@@ -31,6 +42,11 @@ def get_media_duration(file_path: Path) -> float:
 
 def extract_audio_16k(video_path: Path, output_wav: Path) -> None:
     """Extract mono 16kHz audio from video file for transcription/VAD."""
+    if not check_ffmpeg_installed():
+        raise RuntimeError(
+            "FFmpeg was not found on your system PATH.\n"
+            "Please install FFmpeg (e.g. run 'winget install Gyan.FFmpeg') or add ffmpeg.exe to PATH."
+        )
     cmd = [
         "ffmpeg",
         "-y",

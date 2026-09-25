@@ -48,3 +48,31 @@ def test_is_valid_segment():
     good_seg = Mock(no_speech_prob=0.05, avg_logprob=-0.3, compression_ratio=1.1)
     assert is_valid_segment(good_seg)
 
+
+def test_engine_single_pass_transcription():
+    from autocut.engine import RealtimeSubtitleEngine
+    from unittest.mock import Mock
+    import numpy as np
+
+    engine = RealtimeSubtitleEngine(engine_type="whisper")
+    engine.model = Mock()
+    mock_seg = Mock(text=" Hello world", no_speech_prob=0.01, avg_logprob=-0.2, compression_ratio=1.1)
+    engine.model.transcribe.return_value = ([mock_seg], None)
+
+    dummy_audio = np.zeros(16000, dtype=np.float32)
+    result = engine._transcribe_audio(dummy_audio, active_language="en")
+    assert result == "Hello world"
+    assert engine.model.transcribe.call_count == 1
+
+
+def test_engine_higgs_import_guidance(monkeypatch):
+    import pytest
+    import sys
+    from autocut.higgs import HiggsSTTModel
+
+    # When torch is not available, HiggsSTTModel must raise an actionable ImportError
+    monkeypatch.setitem(sys.modules, "torch", None)
+    with pytest.raises(ImportError) as exc_info:
+        HiggsSTTModel()
+    assert "Higgs STT requires PyTorch" in str(exc_info.value)
+

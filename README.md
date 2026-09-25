@@ -1,271 +1,280 @@
-# AutoCut: Real-Time AI Subtitles, Live Translation and Video Silence Cutter
+# AutoCut: AI Audio Recording, Subtitles and Real-Time OBS Streaming
 
-AutoCut is a high-performance local audio and video toolkit powered by faster-whisper, NVIDIA CUDA acceleration, and FFmpeg.
+AutoCut is a local audio, subtitle, and video toolkit powered by NVIDIA CUDA, faster-whisper, Boson AI Higgs Audio v3 STT, and FFmpeg.
 
-It provides two core systems:
-1. **Live Subtitles and Translation Engine**: Real-time caption generation and instant spoken translation with ultra-low latency (~150-250 ms) designed for OBS Studio, Twitch, YouTube, and live screencasts.
-2. **Video Silence Cutter**: Automated video editing engine that removes dead air, breath pauses, and silence gaps from recordings with frame-accurate precision.
-
----
-
-## Table of Contents
-
-- [Quick Start (Windows 1-Click)](#quick-start-windows-1-click)
-- [Architecture and Pipeline](#architecture-and-pipeline)
-- [Feature 1: Real-Time Live Subtitles (autocut live)](#feature-1-real-time-live-subtitles-autocut-live)
-- [Feature 2: Real-Time Live Translation (--translate)](#feature-2-real-time-live-translation---translate)
-- [Feature 3: Global Hotkey Pause (Mute / Resume)](#feature-3-global-hotkey-pause-mute--resume)
-- [Feature 4: OBS Browser Source Overlay and Styling](#feature-4-obs-browser-source-overlay-and-styling)
-- [Feature 5: Video Silence Cutter (autocut cut)](#feature-5-video-silence-cutter-autocut-cut)
-- [Feature 6: Audio Input Device Management (autocut devices)](#feature-6-audio-input-device-management-autocut-devices)
-- [CLI Reference](#cli-reference)
-- [Performance Tuning and Troubleshooting](#performance-tuning-and-troubleshooting)
-- [License](#license)
+It provides four modular capabilities:
+1. **Studio Subtitle Recorder (`autocut record`) - Main Feature**:
+   Press record, speak naturally without streaming latency pressure, and press stop (Enter or F9) to generate high-accuracy SRT and TXT subtitles with automatic clipboard copying.
+2. **Real-Time Live Subtitles (`autocut live`)**:
+   Single-pass final engine designed for OBS Studio, Twitch, YouTube, and screencasts. Outputs clean, finalized captions with zero flicker.
+3. **Media File Transcription (`autocut transcribe`)**:
+   Direct transcription of existing video and audio files (MP4, MKV, MOV, WAV, MP3) into synchronized SRT and TXT subtitle files.
+4. **Video Silence Cutter (`autocut cut`)**:
+   Automated dead-air and pause removal with frame-accurate FFmpeg splicing.
 
 ---
 
 ## Quick Start (Windows 1-Click)
 
-The repository root includes pre-configured batch scripts that start the engine and automatically copy the OBS Browser Source URL directly to your Windows clipboard:
+The repository root includes pre-configured batch scripts:
 
 | Script | Purpose |
 |---|---|
-| **run_live.bat** | Starts live transcription (English default, `small.en` model). Copies overlay URL to clipboard. |
-| **run_live_translate.bat** | Starts real-time translation: speak any language (e.g., Russian), and English subtitles render live on screen. |
-
-Double-click the script, paste the URL into your OBS Browser Source, and your broadcast subtitles are ready immediately.
+| `install.bat` | One-click setup: creates Python virtual environment and installs dependencies with PyTorch CUDA. |
+| `run_record.bat` | Starts studio recorder mode using Higgs Audio v3 STT / Whisper. Press Enter or F9 to stop and automatically copy subtitles to clipboard. |
+| `run_live.bat` | Starts live subtitle stream for OBS Studio. Automatically copies overlay URL to clipboard. |
+| `run_live_translate.bat` | Starts real-time translation: spoken non-English speech renders as English subtitles in OBS. |
 
 ---
 
-## Architecture and Pipeline
+## Architecture
 
 ```
  Microphone (sounddevice / 16 kHz)
-       │  [Pre-allocated circular buffer, 50 ms chunks]
-       ▼
- Dynamic Noise Floor VAD (vad.py)
-       │  [Rolling 25th percentile baseline tracking]
-       ├──(Silence / Fan Hum)──> [0% GPU load, inference skipped]
-       │
-       ▼ (Audible voice detected)
- faster-whisper + CTranslate2 (CUDA FP16)
-       │  [Preloaded DLL handles: cublas64_12, 80-120 ms inference]
-       ├─────────────────────────────────┐
-       ▼                                 ▼
- Local WebSocket / HTTP Server      Session Recorder (captions.srt)
- (:8765, non-blocking broadcast)     (Millisecond-accurate timecodes)
-       │
-       ▼
- OBS Browser Source Overlay
- (2-line rolling subtitles, high-contrast container, vanilla CSS)
+        |
+        +---> Mode 1: autocut record (Studio Recording - Main)
+        |       |
+        |       +---> In-memory lossless audio stream
+        |       +---> RollingTranscriber: pre-emptive VAD phrase transcription on GPU
+        |       +---> Instant Stop (Enter / F9): final subtitles assembled in < 0.3s
+        |             |
+        |             +---> captions.srt (timestamped for video editing)
+        |             +---> captions.txt (clean text)
+        |             +---> Windows Clipboard (ready to paste)
+        |
+        +---> Mode 2: autocut live (OBS Live Streaming)
+        |       |
+        |       +---> Adaptive noise-floor VAD
+        |       +---> Single-Pass inference (finalized text only)
+        |       +---> WebSocket / HTTP (:8765) -> OBS Browser Source
+        |
+        +---> Mode 3: autocut daemon (Headless Resident VRAM Service)
+                |
+                +---> Pre-warms Higgs Audio v3 STT or Whisper in GPU memory
+                +---> HTTP API (:8766): /transcribe, /transcribe_chunk, /switch_model
+                +---> Zero cold-start latency for all client calls
 ```
-
-1. **Zero-Allocation Audio Ingest**: `AudioStreamer` utilizes a pre-allocated `CircularAudioBuffer`. Memory is locked at initialization, preventing garbage collector pauses during live streaming.
-2. **Dynamic Noise Floor Tracking**: `vad.py` maintains a rolling energy history across recent 100 ms audio frames and continuously tracks the 25th percentile. Background fan noise and microphone hiss are treated as baseline floor rather than speech.
-3. **Hardware Acceleration**: Windows CUDA libraries (`cublas64_12.dll`, `cublasLt64_12.dll`, and `nvrtc`) are preloaded into process memory via ctypes before CTranslate2 initialization, ensuring immediate GPU offloading without DLL load failures.
-4. **Low-Latency Streaming**: Intermediate tokens are dispatched every 150 ms while speaking. When a 0.6-second pause occurs, the phrase is finalized, committed to `captions.srt`, and rolled onto the upper line of the overlay.
 
 ---
 
-## Feature 1: Real-Time Live Subtitles (autocut live)
+## Main Feature: Studio Subtitle Recorder (`autocut record`)
 
-The core live engine transcribes spoken audio into text with low latency.
+Ideal for content creators, video editors (Premiere, DaVinci, CapCut), voice memos, and podcasts. Record speech without latency constraints and let the neural network transcribe the complete segment with full context.
+
+Thanks to the **RollingTranscriber** pipeline, completed phrases are pre-emptively recognized in the background while you are speaking. When you stop recording, results appear almost instantaneously.
 
 ```powershell
-# Default English setup (CUDA, small.en model, 150 ms step)
+# 1-Click launch via Windows batch file:
+.\run_record.bat
+
+# Standard CLI launch (Whisper base, CUDA):
+.\.venv\Scripts\autocut.exe record
+
+# Using Higgs Audio v3 STT (LLM-decoder backend):
+.\.venv\Scripts\autocut.exe record --engine higgs
+
+# Specifying language and custom model:
+.\.venv\Scripts\autocut.exe record -l en -m small.en
+
+# Specifying custom output filename:
+.\.venv\Scripts\autocut.exe record -o my_subtitles.srt
+```
+
+### Workflow:
+1. Recording starts with an active elapsed timer in the terminal.
+2. Press **ENTER** in the console or press **F9** (global hotkey across all applications) to stop recording.
+3. The background worker transcribes completed phrases on-the-fly.
+4. The STT engine finalizes:
+   - `captions.srt` (timecoded subtitles)
+   - `captions.txt` (raw transcript)
+   - Automatically copied to the Windows clipboard for instant pasting.
+
+---
+
+## Streaming Feature: Real-Time Subtitles for OBS (`autocut live`)
+
+Designed for live streams and voice calls. The **Single-Pass Final Engine** eliminates interim draft flickering. As soon as a speaker pauses (0.4s threshold), the completed sentence is transcribed once and emitted directly as a final subtitle.
+
+```powershell
+# Default fast Whisper setup (CUDA, small.en model):
 .\.venv\Scripts\autocut.exe live
 
-# Russian speech recognition using multilingual model
-.\.venv\Scripts\autocut.exe live -l ru -m small
+# Using Higgs Audio v3 STT:
+.\.venv\Scripts\autocut.exe live --engine higgs
 
-# Custom noise gate for loud or noisy microphone hardware
+# Live translation into English:
+.\.venv\Scripts\autocut.exe live --translate -l ru -m small
+
+# Custom noise gate for loud microphones or background noise:
 .\.venv\Scripts\autocut.exe live --energy-threshold 0.025
 ```
 
-### Runtime Behavior:
-- The terminal displays live progress tokens (`interim words`) and final sentences (`[Final]`).
-- Subtitles are streamed to the OBS browser overlay and recorded to `captions.srt` with synchronized timestamps.
+### Controls During Live Streaming:
+- **Global Hotkey (`F9`)**: Toggles subtitle mute/pause instantly without switching windows.
+- **OBS Integration**: Add a **Browser Source** pointing to `http://localhost:8765/?theme=standard&size=28` with 1920x1080 resolution.
+
+### Overlay Themes:
+- Standard (white text, dark plate): `?theme=standard&size=28`
+- Cinema Yellow: `?theme=yellow&size=28`
+- Outline (transparent background): `?theme=outline&size=32`
+- Black on White: `?theme=black&size=28`
+- Position customization: `&pos=top` or `&pos=center`
 
 ---
 
-## Feature 2: Real-Time Live Translation (--translate)
+## Feature 3: Resident VRAM Daemon (`autocut daemon`)
 
-Allows streamers to broadcast to international audiences:
-
-- **How it works**: Speak in your native language (Russian, Spanish, German, Japanese, etc.), and the Whisper decoder outputs fluent English subtitles live in OBS.
-- The engine automatically resolves `.en` models to multilingual variants (`small` or `base`) when translation is requested.
+Starts a background local HTTP service that keeps heavy models (such as Higgs Audio v3 STT or Whisper large) resident in GPU memory to eliminate model reloading delays:
 
 ```powershell
-# Speak Russian, render English subtitles on stream:
-.\.venv\Scripts\autocut.exe live --translate -l ru -m small
+# Start daemon with Higgs Audio v3 STT:
+.\.venv\Scripts\autocut.exe daemon --engine higgs --port 8766
 
-# Alternatively, use the 1-click Windows launcher:
-run_live_translate.bat
+# Start daemon with Whisper:
+.\.venv\Scripts\autocut.exe daemon --engine whisper -m small.en
 ```
 
 ---
 
-## Feature 3: Global Hotkey Pause (Mute / Resume)
+## Feature 4: File Transcription (`autocut transcribe`)
 
-Streamers often need to temporarily mute subtitles during private conversations, phone calls, or breaks.
+Transcribe pre-recorded media files (MP4, MKV, MOV, WAV, MP3) into synchronized subtitles:
 
-- **Default Key**: `F9`
-- **Behavior**:
-  - The hotkey is hooked globally using the Windows keyboard API. It functions inside full-screen games and third-party apps without needing to switch windows.
-  - First press: Captions are cleared from OBS, audio inference pauses, and the terminal displays `[PAUSED]`.
-  - Second press: Captions resume immediately with `[RESUMED]`.
-- **Custom Hotkey Binding**:
-  ```powershell
-  .\.venv\Scripts\autocut.exe live --hotkey pause
-  .\.venv\Scripts\autocut.exe live --hotkey f10
-  ```
+```powershell
+# Transcribe video to subtitles:
+.\.venv\Scripts\autocut.exe transcribe input.mp4 -o output.srt
+
+# Transcribe with Higgs Audio v3 STT:
+.\.venv\Scripts\autocut.exe transcribe voice_memo.wav --engine higgs
+```
 
 ---
 
-## Feature 4: OBS Browser Source Overlay and Styling
+## Feature 5: Video Silence Cutter (`autocut cut`)
 
-The frontend uses a 2-line rolling layout:
-- **Line 1 (Upper)**: The previously finalized sentence, rendered at slight opacity for reading context.
-- **Line 2 (Lower)**: Current live sentence streaming in real time.
-
-### OBS Studio Setup:
-1. In OBS, click `+` under **Sources** and select **Browser**.
-2. Paste the target URL into the **URL** field.
-3. Set **Width** to `1920` and **Height** to `1080`.
-4. Check **Shutdown source when not visible** and **Refresh browser when scene becomes active**.
-
-### URL Parameters Reference:
-
-All visual parameters are configured via URL query parameters without restarting the server:
-
-| Style Goal | URL |
-|---|---|
-| **Standard (Default)**<br>Crisp white text on dark plate (rgba 0, 0, 0, 0.78) | `http://localhost:8765/?theme=standard&size=28` |
-| **Black on White**<br>High-contrast dark text on bright plate | `http://localhost:8765/?theme=black&size=28` |
-| **Outline Mode**<br>White text with deep black stroke, transparent background | `http://localhost:8765/?theme=outline&size=32` |
-| **Yellow Subtitles**<br>Classic broadcast cinema yellow on dark background | `http://localhost:8765/?theme=yellow&size=28` |
-| **Top Screen Position** | `http://localhost:8765/?theme=standard&pos=top` |
-| **Center Screen Position** | `http://localhost:8765/?theme=standard&pos=center` |
-| **Custom Size** | `http://localhost:8765/?size=38` |
-| **Fully Customized**<br>(custom text color, background, font size, alignment) | `http://localhost:8765/?color=yellow&bg=rgba(0,0,0,0.85)&size=32&align=center` |
-
----
-
-## Feature 5: Video Silence Cutter (autocut cut)
-
-Automated editing tool for YouTube videos, podcasts, and screencasts. It detects silence and dead air, cuts unnecessary pauses, and splices the media with frame accuracy.
+Automatically detects silence intervals and splices out dead air with sample accuracy:
 
 ```powershell
 # Basic silence removal:
-.\.venv\Scripts\autocut.exe cut raw_recording.mp4 -o trimmed_video.mp4
+.\.venv\Scripts\autocut.exe cut raw_video.mp4 -o edited_video.mp4
+
+# Remove pauses longer than 0.5s with 120ms speech padding and export remapped SRT:
+.\.venv\Scripts\autocut.exe cut raw.mp4 -o out.mp4 --pause-threshold 0.5 --margin 0.12 --output-srt out.srt
 ```
-
-### Advanced Cutting Parameters:
-
-```powershell
-# Cut gaps longer than 0.5s, keep 120 ms audio padding, and export synchronized SRT:
-.\.venv\Scripts\autocut.exe cut input.mp4 -o output.mp4 --pause-threshold 0.5 --margin 0.12 --output-srt output.srt
-```
-
-### Technical Highlights:
-- **Sample-Accurate Splicing**: Generates an FFmpeg `filter_complex` pipeline using paired `trim`/`atrim` and `concat` operations. Audio and video tracks stay perfectly in sync over long files.
-- **Speech Padding Margin**: Adds configurable margins (`margin=0.15s` by default) around every speech interval to prevent clipped syllables.
-- **Synchronized Subtitles**: If `--output-srt` is supplied, speech timestamps are automatically remapped to match the newly edited timeline.
-- **Detailed Summary**: Prints duration before and after, time saved, reduction percentage, and segment count.
 
 ---
 
-## Feature 6: Audio Input Device Management (autocut devices)
+## Audio Input Device Management (`autocut devices`)
 
-To inspect connected audio interfaces (USB microphones, interfaces, headsets):
+List available audio interfaces:
 
 ```powershell
 .\.venv\Scripts\autocut.exe devices
 ```
 
-Example output:
-```
-┏━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┓
-┃ Index ┃ Device Name                    ┃ Channels ┃ SampleRate ┃ Default ┃
-┡━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━┩
-│ 1     │ Microphone (HyperX QuadCast)   │ 2        │ 48000 Hz   │ YES     │
-│ 3     │ Microphone (HD Pro Webcam C920)│ 2        │ 16000 Hz   │         │
-└───────┴────────────────────────────────┴──────────┴────────────┴─────────┘
-```
-
-Bind the engine to a specific input device index:
+Specify a device index:
 ```powershell
+.\.venv\Scripts\autocut.exe record --device-index 1
 .\.venv\Scripts\autocut.exe live --device-index 1
 ```
 
 ---
 
-## CLI Reference
+## Supported STT Engines
 
-### Command: autocut live
-```
-Usage: autocut live [OPTIONS]
-
-Options:
-  -m, --model TEXT            Whisper model name: 'small.en', 'tiny.en', 'base', 'small', 'medium' [default: small.en]
-  -d, --device TEXT           Inference device: 'cuda' or 'cpu' [default: cuda]
-  --compute-type TEXT         Quantization: 'float16', 'int8', 'float32' [default: float16]
-  -l, --language TEXT         Language code: 'en', 'ru', 'auto', etc. [default: en]
-  -T, --translate             Enable real-time spoken translation to English
-  -k, --hotkey TEXT           Global hotkey to toggle pause/mute [default: f9]
-  --energy-threshold FLOAT    VAD noise floor threshold (0.015-0.035 for noisy mics) [default: 0.015]
-  -p, --port INTEGER          Server port for HTTP and WebSocket [default: 8765]
-  --device-index INTEGER      Microphone index from 'autocut devices'
-  -o, --output-srt PATH       Path to record subtitle session [default: captions.srt]
-  -t, --theme TEXT            Overlay theme: 'standard', 'black', 'outline', 'yellow' [default: standard]
-  -s, --size INTEGER          Overlay font size in pixels [default: 28]
-  --help                      Show this message and exit.
-```
-
-### Command: autocut cut
-```
-Usage: autocut cut [OPTIONS] INPUT_VIDEO
-
-Arguments:
-  INPUT_VIDEO                 Path to input video or audio file (MP4, MKV, MOV, WAV) [required]
-
-Options:
-  -o, --output PATH           Path to export cut file [default: {name}_cut.mp4]
-  -m, --model TEXT            Whisper model for detection [default: base]
-  -d, --device TEXT           'cuda' or 'cpu' [default: cuda]
-  -p, --pause-threshold FLOAT Minimum silence duration in seconds to cut out [default: 0.6]
-  --margin FLOAT              Audio padding margin around speech in seconds [default: 0.15]
-  -l, --language TEXT         Spoken language code ('en', 'ru', etc.)
-  --output-srt PATH           Path to export synchronized subtitles
-  --help                      Show this message and exit.
-```
+1. **faster-whisper (CTranslate2)**:
+   - Models: `tiny`, `base`, `small`, `medium`, `large-v3-turbo`.
+   - Low VRAM footprint (500 MB - 2 GB) with CUDA float16 acceleration.
+2. **Higgs Audio v3 STT (`bosonai/higgs-audio-v3-stt`)**:
+   - Whisper-Large-v3 acoustic encoder coupled with a Qwen3-based language model decoder.
+   - High contextual understanding and punctuation accuracy.
+   - Activated via the `--engine higgs` flag.
 
 ---
 
-## Performance Tuning and Troubleshooting
+## CLI Reference Summary
 
-### 1. Verifying CUDA Acceleration
-When starting `autocut live`, check the status banner:
+### autocut record
 ```
-Device: cuda (float16)
+Options:
+  -o, --output-srt PATH       Path to export SRT subtitles [default: captions.srt]
+  -e, --engine TEXT           STT engine: 'higgs' or 'whisper' [default: higgs]
+  -m, --model TEXT            Whisper model name [default: large-v3-turbo]
+  -d, --device TEXT           Inference device: 'cuda' or 'cpu' [default: cuda]
+  --compute-type TEXT         Quantization type [default: float16]
+  -l, --language TEXT         Language code ('auto', 'en', 'ru', etc.) [default: auto]
+  -k, --hotkey TEXT           Hotkey to stop recording [default: f9]
+  --device-index INTEGER      Microphone index from 'autocut devices'
+  -w, --save-wav PATH         Optional path to save recorded audio WAV
+  --clipboard / --no-clipboard Automatically copy text to clipboard [default: True]
 ```
-If CUDA libraries are missing or an unsupported GPU is present, the engine logs a warning and automatically falls back to CPU quantization (`cpu (int8)`).
 
-### 2. High Microphone Noise or Fan Hum
-If random tokens or phantom periods appear during silence:
-- Increase the noise threshold:
-  ```powershell
-  .\.venv\Scripts\autocut.exe live --energy-threshold 0.025
-  ```
+### autocut live
+```
+Options:
+  -m, --model TEXT            Model name [default: small.en]
+  -d, --device TEXT           Inference device [default: cuda]
+  --compute-type TEXT         Quantization [default: float16]
+  -l, --language TEXT         Language code [default: en]
+  -T, --translate             Enable real-time spoken translation to English
+  -k, --hotkey TEXT           Global hotkey to toggle pause/mute [default: f9]
+  --energy-threshold FLOAT    Noise gate threshold [default: 0.015]
+  -p, --port INTEGER          Server port [default: 8765]
+  -o, --output-srt PATH       Path to record subtitle session [default: captions.srt]
+  -t, --theme TEXT            Theme: 'standard', 'black', 'outline', 'yellow'
+  -s, --size INTEGER          Font size in pixels [default: 28]
+  -e, --engine TEXT           STT engine: 'whisper' or 'higgs' [default: whisper]
+```
 
-### 3. Whisper Model Recommendations
-- **small.en** (Default for English): Best speed-to-accuracy ratio on GPU (~100 ms per chunk).
-- **base** (Multilingual): Fastest multilingual model (~60 ms on GPU). Ideal for video silence cutting (`autocut cut`).
-- **small** (Multilingual): Recommended for Russian recognition and real-time translation (`--translate`).
-- **large-v3-turbo**: Maximum vocabulary capacity for technical terms and whisper audio (requires ~3 GB VRAM).
+### autocut daemon
+```
+Options:
+  -p, --port INTEGER          Daemon HTTP port [default: 8766]
+  -e, --engine TEXT           Pre-warmed STT engine: 'higgs' or 'whisper' [default: higgs]
+  -m, --model TEXT            Model name
+  -d, --device TEXT           Inference device [default: cuda]
+  --compute-type TEXT         Quantization [default: float16]
+  -l, --language TEXT         Default language code
+```
+
+### autocut transcribe
+```
+Arguments:
+  INPUT_FILE                  Path to audio or video file (MP4, MKV, WAV, MP3) [required]
+
+Options:
+  -o, --output-srt PATH       Path to export SRT subtitles
+  -e, --engine TEXT           STT engine: 'higgs' or 'whisper' [default: higgs]
+  -m, --model TEXT            Whisper model name [default: large-v3-turbo]
+  -d, --device TEXT           Inference device [default: cuda]
+  --compute-type TEXT         Quantization [default: float16]
+  -l, --language TEXT         Language code [default: auto]
+  --clipboard / --no-clipboard Copy text to Windows clipboard
+```
+
+### autocut cut
+```
+Arguments:
+  INPUT_VIDEO                 Path to input video or audio file [required]
+
+Options:
+  -o, --output PATH           Path to export trimmed video
+  -m, --model TEXT            Whisper model name [default: base]
+  -d, --device TEXT           Inference device [default: cuda]
+  -p, --pause-threshold FLOAT Minimum silence duration in seconds [default: 0.6]
+  --margin FLOAT              Audio padding margin in seconds [default: 0.15]
+  -l, --language TEXT         Spoken language code
+  --output-srt PATH           Export synchronized subtitles
+```
+
+### autocut devices
+```
+Usage: autocut devices
+Prints all active audio input interfaces, channels, sample rates, and default status.
+```
 
 ---
 
 ## License
 
-MIT License. Free for personal, educational, and commercial streaming, recording, and broadcasting.
+MIT License. Free for personal and commercial broadcasting, recording, and editing.

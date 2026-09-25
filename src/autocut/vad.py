@@ -38,5 +38,12 @@ class VoiceActivityDetector:
 
         # Speech must be clearly above both minimum sensitivity and the dynamic noise floor
         dynamic_threshold = max(self.energy_threshold, self.noise_floor * 2.2)
-
         return rms > dynamic_threshold
+
+    def is_speech(self, audio: np.ndarray, sample_rate: int = 16000) -> bool:
+        """Alias for is_speech_active."""
+        return self.is_speech_active(audio)
+
+
+# Backward-compatible alias
+DynamicNoiseFloorVAD = VoiceActivityDetector

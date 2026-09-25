@@ -12,21 +12,42 @@ import numpy as np
 
 # On Windows, register NVIDIA CUDA site-packages bin directories and preload DLLs before ctranslate2/faster_whisper loads
 _DLL_HANDLES = []
-if sys.platform == "win32":
-    site_packages = Path(sys.prefix) / "Lib" / "site-packages"
-    for nvidia_bin in site_packages.glob("nvidia/*/bin"):
-        if nvidia_bin.is_dir():
+
+
+def register_cuda_dlls() -> None:
+    """Register NVIDIA site-packages and torch/lib DLL directories and preload CUDA libraries on Windows."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    search_dirs = []
+    if getattr(sys, "frozen", False):
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        internal_dir = base_dir / "_internal"
+        search_dirs.extend([
+            base_dir,
+            internal_dir,
+            internal_dir / "torch" / "lib",
+        ])
+        if internal_dir.is_dir():
+            for p in internal_dir.glob("nvidia/*/bin"):
+                search_dirs.append(p)
+    else:
+        site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+        search_dirs.append(site_packages / "torch" / "lib")
+        for nvidia_bin in site_packages.glob("nvidia/*/bin"):
+            search_dirs.append(nvidia_bin)
+
+    for d in search_dirs:
+        if d.is_dir():
+            resolved = str(d.resolve())
             try:
-                _DLL_HANDLES.append(os.add_dll_directory(str(nvidia_bin.resolve())))
-                os.environ["PATH"] = str(nvidia_bin.resolve()) + ";" + os.environ.get("PATH", "")
+                _DLL_HANDLES.append(os.add_dll_directory(resolved))
             except Exception:
                 pass
-    import ctypes
-    for dll in site_packages.glob("nvidia/*/bin/*.dll"):
-        try:
-            _DLL_HANDLES.append(ctypes.CDLL(str(dll.resolve())))
-        except Exception:
-            pass
+            os.environ["PATH"] = resolved + ";" + os.environ.get("PATH", "")
+
+
+register_cuda_dlls()
 
 from faster_whisper import WhisperModel
 from autocut.audio import AudioStreamer
@@ -36,10 +57,10 @@ from autocut.config import (
     DEFAULT_LANGUAGE,
     DEFAULT_MODEL,
     FADE_OUT_SECONDS,
+    MAX_SPEECH_DURATION,
     MIN_SPEECH_DURATION,
     SAMPLE_RATE,
     SILENCE_FINALIZE_SECONDS,
-    STEP_SECONDS,
 )
 from autocut.vad import VoiceActivityDetector, calculate_rms
 
@@ -95,6 +116,9 @@ def clean_hallucinations(text: str, rms_energy: float) -> str:
         logger.debug("Filtered ghost hallucination: '%s' (RMS: %.4f)", text, rms_energy)
         return ""
 
+    if "live conversation clean subtitles" in normalized:
+        return ""
+
     # Check for pathological word repetition (e.g., "you you you you")
     words = normalized.split()
     if len(words) >= 4 and len(set(words)) == 1:
@@ -105,7 +129,7 @@ def clean_hallucinations(text: str, rms_energy: float) -> str:
 
 
 class RealtimeSubtitleEngine:
-    """Production-grade subtitle engine with Inference Gate, Anti-Hallucination, and Dynamic Throttling."""
+    """Production-grade subtitle engine with Single-Pass Final Transcription and modular STT backends."""
 
     def __init__(
         self,
@@ -114,7 +138,7 @@ class RealtimeSubtitleEngine:
         compute_type: str = DEFAULT_COMPUTE_TYPE,
         language: str = DEFAULT_LANGUAGE,
         task: str = "transcribe",
-        initial_prompt: Optional[str] = "Live conversation, clean subtitles.",
+        engine_type: str = "whisper",
         device_index: Optional[int] = None,
         energy_threshold: float = 0.015,
         on_caption: Optional[Callable[[str, bool], None]] = None,
@@ -123,6 +147,7 @@ class RealtimeSubtitleEngine:
         on_status: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> None:
         self.task = task
+        self.engine_type = engine_type.lower()
         # Translation requires a multilingual model (cannot use English-only .en models)
         if self.task == "translate" and model_name.endswith(".en"):
             fallback = model_name[:-3]
@@ -133,7 +158,6 @@ class RealtimeSubtitleEngine:
         self.device = device
         self.compute_type = compute_type
         self.language = language
-        self.initial_prompt = initial_prompt
         self.device_index = device_index
         self.energy_threshold = energy_threshold
         self.on_caption = on_caption
@@ -143,11 +167,10 @@ class RealtimeSubtitleEngine:
 
         self.vad = VoiceActivityDetector(energy_threshold=self.energy_threshold)
         self.streamer = AudioStreamer(device_index=self.device_index)
-        self.model: Optional[WhisperModel] = None
+        self.model: Any = None
 
-        # Concurrency & Adaptive Throttling
+        # Concurrency & Locks
         self._inference_lock = threading.Lock()
-        self._adaptive_step = STEP_SECONDS
         self._running = False
         self._paused = False
         self._thread: Optional[threading.Thread] = None
@@ -180,7 +203,16 @@ class RealtimeSubtitleEngine:
         return self._paused
 
     def load_model(self) -> None:
-        """Load the faster-whisper model on configured device (with automatic CPU fallback on missing DLLs)."""
+        """Load the configured STT model (Whisper or Higgs Audio v3)."""
+        if self.engine_type == "higgs":
+            from autocut.higgs import HiggsSTTModel
+            logger.info("Loading Higgs Audio v3 STT model '%s'...", self.model_name)
+            self.model = HiggsSTTModel(
+                model_id=self.model_name if "higgs" in self.model_name else "bosonai/higgs-audio-v3-stt",
+                device=self.device if "cuda" in self.device else "cuda:0",
+            )
+            return
+
         logger.info("Loading Whisper model '%s' on %s...", self.model_name, self.device)
         try:
             self.model = WhisperModel(
@@ -205,13 +237,39 @@ class RealtimeSubtitleEngine:
             else:
                 raise e
 
+    def _transcribe_audio(self, audio_window: np.ndarray, active_language: Optional[str]) -> str:
+        """Transcribe an audio segment directly in one pass."""
+        if self.engine_type == "higgs":
+            results = self.model.transcribe(audio_window, language=active_language)
+            return " ".join(results).strip()
+
+        segments, _ = self.model.transcribe(
+            audio_window,
+            language=active_language,
+            task=self.task,
+            beam_size=1,
+            no_speech_threshold=0.55,
+            condition_on_previous_text=False,
+            vad_filter=True,
+            vad_parameters=dict(min_speech_duration_ms=100, threshold=0.40),
+        )
+        valid_parts = [
+            seg.text.strip()
+            for seg in segments
+            if is_valid_segment(seg) and seg.text.strip()
+        ]
+        return " ".join(valid_parts).strip()
+
     def _worker(self) -> None:
+        """Single-pass utterance listener and transcription loop.
+        
+        Eliminates intermediate draft flickering and double-inference:
+        Speech is detected -> phrase ends -> transcribed ONCE directly -> emitted as final.
+        """
         last_speech_time = time.time()
-        last_inference_time = 0.0
-        current_text = ""
+        speech_start_time = 0.0
         is_speaking = False
         fade_sent = False
-        speech_start_time = 0.0
         active_language = self.language if self.language and self.language != "auto" else None
 
         while self._running:
@@ -219,7 +277,6 @@ class RealtimeSubtitleEngine:
             if self._paused:
                 if is_speaking:
                     is_speaking = False
-                    current_text = ""
                 continue
 
             now = time.time()
@@ -236,103 +293,49 @@ class RealtimeSubtitleEngine:
                 if not is_speaking:
                     is_speaking = True
                     speech_start_time = now
-                    active_language = self.language if self.language and self.language != "auto" else None
+                    fade_sent = False
                 last_speech_time = now
-                fade_sent = False
 
-            current_speech_dur = (now - speech_start_time) if is_speaking else 0.0
+            if is_speaking:
+                speech_duration = now - speech_start_time
+                silence_duration = now - last_speech_time
 
-            # Step interval check with adaptive throttling
-            if (
-                is_speaking
-                and current_speech_dur >= MIN_SPEECH_DURATION
-                and (now - last_inference_time) >= self._adaptive_step
-            ):
-                # Non-blocking inference gate (guarantees zero queue buildup on GPU)
-                if self._inference_lock.acquire(blocking=False):
-                    try:
-                        last_inference_time = now
-                        audio_window = self.streamer.get_recent_audio(min(current_speech_dur + 0.15, 12.0))
-                        window_rms = calculate_rms(audio_window)
+                # 1) Natural pause after speaking
+                if silence_duration >= SILENCE_FINALIZE_SECONDS:
+                    actual_speech_len = last_speech_time - speech_start_time
+                    if actual_speech_len >= MIN_SPEECH_DURATION:
+                        audio_window = self.streamer.get_recent_audio(min(actual_speech_len + 0.20, 15.0))
+                        if len(audio_window) > 0 and self._inference_lock.acquire(blocking=True, timeout=0.5):
+                            try:
+                                raw_text = self._transcribe_audio(audio_window, active_language)
+                                cleaned = clean_hallucinations(raw_text, calculate_rms(audio_window))
+                                if cleaned and self.on_caption:
+                                    self.on_caption(cleaned, True)
+                            except Exception as e:
+                                logger.debug("Inference error: %s", e)
+                            finally:
+                                self._inference_lock.release()
+                    # In all cases when silence reached, reset is_speaking
+                    is_speaking = False
 
-                        t0 = time.perf_counter()
-                        segments, info = self.model.transcribe(
-                            audio_window,
-                            language=active_language,
-                            task=self.task,
-                            initial_prompt=self.initial_prompt,
-                            beam_size=1,
-                            no_speech_threshold=0.55,
-                            condition_on_previous_text=False,
-                            vad_filter=True,
-                            vad_parameters=dict(min_speech_duration_ms=100, threshold=0.40),
-                        )
-                        # Lock detected language for current utterance to eliminate re-detection latency
-                        if active_language is None and getattr(info, "language", None):
-                            active_language = info.language
-
-                        valid_parts = [
-                            seg.text.strip()
-                            for seg in segments
-                            if is_valid_segment(seg) and seg.text.strip()
-                        ]
-                        raw_text = " ".join(valid_parts).strip()
-                        inference_time = time.perf_counter() - t0
-
-                        # Dynamic Throttling
-                        if inference_time > 0.180:
-                            self._adaptive_step = min(0.40, self._adaptive_step * 1.15)
-                        elif inference_time < 0.080:
-                            self._adaptive_step = max(STEP_SECONDS, self._adaptive_step * 0.95)
-
-                        cleaned_text = clean_hallucinations(raw_text, window_rms)
-                        if cleaned_text:
-                            current_text = cleaned_text
-                            if self.on_caption:
-                                self.on_caption(current_text, False)
-                    except Exception as e:
-                        logger.debug("Inference error: %s", e)
-                    finally:
-                        self._inference_lock.release()
-
-            # Silence finalize check
-            silence_duration = now - last_speech_time
-            if is_speaking and silence_duration >= SILENCE_FINALIZE_SECONDS:
-                if self._inference_lock.acquire(blocking=True, timeout=0.3):
-                    try:
-                        audio_window = self.streamer.get_recent_audio(min(current_speech_dur + 0.2, 12.0))
-                        segments, _ = self.model.transcribe(
-                            audio_window,
-                            language=active_language,
-                            task=self.task,
-                            initial_prompt=self.initial_prompt,
-                            beam_size=1,
-                            no_speech_threshold=0.55,
-                            condition_on_previous_text=False,
-                            vad_filter=True,
-                            vad_parameters=dict(min_speech_duration_ms=100, threshold=0.40),
-                        )
-                        valid_parts = [
-                            seg.text.strip()
-                            for seg in segments
-                            if is_valid_segment(seg) and seg.text.strip()
-                        ]
-                        final_text = " ".join(valid_parts).strip()
-                        cleaned = clean_hallucinations(final_text, calculate_rms(audio_window))
-                        if cleaned:
-                            current_text = cleaned
-                    except Exception:
-                        pass
-                    finally:
-                        self._inference_lock.release()
-
-                if current_text and self.on_caption:
-                    self.on_caption(current_text, True)
-                current_text = ""
-                is_speaking = False
-                active_language = self.language if self.language and self.language != "auto" else None
+                # 2) Continuous monologue reached max chunk duration
+                elif speech_duration >= MAX_SPEECH_DURATION:
+                    audio_window = self.streamer.get_recent_audio(min(speech_duration + 0.15, 15.0))
+                    if len(audio_window) > 0 and self._inference_lock.acquire(blocking=True, timeout=0.5):
+                        try:
+                            raw_text = self._transcribe_audio(audio_window, active_language)
+                            cleaned = clean_hallucinations(raw_text, calculate_rms(audio_window))
+                            if cleaned and self.on_caption:
+                                self.on_caption(cleaned, True)
+                        except Exception as e:
+                            logger.debug("Inference error: %s", e)
+                        finally:
+                            self._inference_lock.release()
+                    speech_start_time = now
+                    last_speech_time = now
 
             # Fade out overlay on prolonged silence
+            silence_duration = now - last_speech_time
             if not is_speaking and not fade_sent and silence_duration >= FADE_OUT_SECONDS:
                 fade_sent = True
                 if self.on_clear:

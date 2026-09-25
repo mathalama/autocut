@@ -1,11 +1,13 @@
-# Python & Bytecode
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyd
 
-# Distribution / Packaging
+# Distribution / Packaging / Executables
 dist/
 build/
+Output/
 *.egg-info/
 *.egg
 
@@ -13,19 +15,36 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+.cache/
 
 # Environments
 .venv/
 env/
 venv/
+ENV/
 
-# Local session recordings & output
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local audio / video inputs and subtitle outputs
 captions.srt
 captions.txt
+*.srt
+*.vtt
 *.wav
+*.mp3
 *.mp4
 *.mkv
+*.mov
+*.flac
+*.aac
+*.m4a
 
-# OS files
+# Logs & OS artifacts
+*.log
 .DS_Store
 Thumbs.db
+desktop.ini

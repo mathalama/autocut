@@ -12,15 +12,20 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_COMPUTE_TYPE = "float16"
 DEFAULT_LANGUAGE = "en"
 
-# Timing settings (in seconds) - tuned for real-time low latency
-STEP_SECONDS = 0.15         # Run inference every 150ms when speech is active
-MIN_SPEECH_DURATION = 0.20  # Minimum speech duration to transcribe
-SILENCE_FINALIZE_SECONDS = 0.6  # Pause duration to mark phrase as final
-FADE_OUT_SECONDS = 2.5       # Time of silence before subtitles fade out on screen
+# Timing settings (in seconds) - tuned for real-time single-pass subtitles
+MIN_SPEECH_DURATION = 0.25      # Minimum speech duration to transcribe (ignore micro-clicks)
+SILENCE_FINALIZE_SECONDS = 0.40  # Natural speech pause threshold to finalize subtitle
+MAX_SPEECH_DURATION = 3.80      # Max utterance duration before emitting subtitle during continuous speech
+FADE_OUT_SECONDS = 3.0          # Time of silence before subtitles fade out on screen
 
 # Server settings
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-DEFAULT_WS_PORT = 8766
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+import sys
+if getattr(sys, "frozen", False):
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    candidate = base_dir / "autocut" / "static"
+    STATIC_DIR = candidate if candidate.exists() else (base_dir / "static")
+else:
+    STATIC_DIR = Path(__file__).resolve().parent / "static"
